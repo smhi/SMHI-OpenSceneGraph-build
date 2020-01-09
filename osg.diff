@@ -1,0 +1,4457 @@
+diff --git a/examples/osgpoints/osgpoints.cpp b/examples/osgpoints/osgpoints.cpp
+index 3df360f..dc0945e 100644
+--- a/examples/osgpoints/osgpoints.cpp
++++ b/examples/osgpoints/osgpoints.cpp
+@@ -36,6 +36,7 @@ public:
+             _stateset(stateset)
+         {
+             _point = new osg::Point;
++            _point->setSize(1.0);
+             _point->setDistanceAttenuation(osg::Vec3(0.0,0.0000,0.05f));
+             _stateset->setAttribute(_point.get());
+         }
+@@ -119,8 +120,7 @@ int main( int argc, char **argv )
+     arguments.getApplicationUsage()->addCommandLineOption("--points","Sets the polygon mode to GL_POINT for front and back faces.");
+ 
+ 
+-    // construct the viewer.
+-    osgViewer::Viewer viewer;
++    
+ 
+     bool shader = false;
+     while (arguments.read("--shader")) shader = true;
+@@ -143,6 +143,9 @@ int main( int argc, char **argv )
+         arguments.getApplicationUsage()->write(std::cout,osg::ApplicationUsage::COMMAND_LINE_OPTION);
+         return 1;
+     }
++    
++    // construct the viewer.
++    osgViewer::Viewer viewer(arguments);
+ 
+     // read the scene from the list of file specified commandline args.
+     osg::ref_ptr<osg::Node> loadedModel = osgDB::readRefNodeFiles(arguments);
+@@ -213,7 +216,6 @@ int main( int argc, char **argv )
+ 
+         osg::Shader* vertex_shader = new osg::Shader(osg::Shader::VERTEX, vertexShaderSource);
+         program->addShader(vertex_shader);
+-
+ #if 0
+         //////////////////////////////////////////////////////////////////
+         // fragment shader
+@@ -221,7 +223,10 @@ int main( int argc, char **argv )
+         char fragmentShaderSource[] =
+             "void main(void) \n"
+             "{ \n"
+-            "    gl_FragColor = gl_Color; \n"
++            "    gl_FragColor[0] = gl_Color[0]/255.0;\n"
++            "    gl_FragColor[1] = gl_Color[1]/255.0;\n"
++            "    gl_FragColor[2] = gl_Color[2]/255.0;\n"
++            "    gl_FragColor[3] = gl_Color[3]/255.0;\n"
+             "}\n";
+ 
+         osg::Shader* fragment_shader = new osg::Shader(osg::Shader::FRAGMENT, fragmentShaderSource);
+diff --git a/examples/osgvolume/osgvolume.cpp b/examples/osgvolume/osgvolume.cpp
+index 0390ca9..eb448f5 100644
+--- a/examples/osgvolume/osgvolume.cpp
++++ b/examples/osgvolume/osgvolume.cpp
+@@ -420,8 +420,10 @@ int main( int argc, char **argv )
+     arguments.getApplicationUsage()->addCommandLineOption("--s_maxTextureSize <size>","Set the texture maximum resolution in the s (x) dimension.");
+     arguments.getApplicationUsage()->addCommandLineOption("--t_maxTextureSize <size>","Set the texture maximum resolution in the t (y) dimension.");
+     arguments.getApplicationUsage()->addCommandLineOption("--r_maxTextureSize <size>","Set the texture maximum resolution in the r (z) dimension.");
++    arguments.getApplicationUsage()->addCommandLineOption("--modulate-alpha-by-colour <colourModulate.x()> <colourModulate.y()> <colourModulate.z()> <colourModulate.w()>","For each pixel multiply the alpha value by the color.");
+     arguments.getApplicationUsage()->addCommandLineOption("--modulate-alpha-by-luminance","For each pixel multiply the alpha value by the luminance.");
+     arguments.getApplicationUsage()->addCommandLineOption("--replace-alpha-with-luminance","For each pixel set the alpha value to the luminance.");
++    arguments.getApplicationUsage()->addCommandLineOption("--replace-alpha-with-luminance-inverted","For each pixel set the alpha value to 1-luminance.");
+     arguments.getApplicationUsage()->addCommandLineOption("--replace-rgb-with-luminance","For each rgb pixel convert to the luminance.");
+     arguments.getApplicationUsage()->addCommandLineOption("--num-components <num>","Set the number of components to in he target image.");
+     arguments.getApplicationUsage()->addCommandLineOption("--no-rescale","Disable the rescaling of the pixel data to 0.0 to 1.0 range");
+@@ -566,7 +568,9 @@ int main( int argc, char **argv )
+     while(arguments.read("--modulate-alpha-by-luminance")) { colourSpaceOperation = osg::MODULATE_ALPHA_BY_LUMINANCE; }
+     while(arguments.read("--modulate-alpha-by-colour", colourModulate.x(),colourModulate.y(),colourModulate.z(),colourModulate.w() )) { colourSpaceOperation = osg::MODULATE_ALPHA_BY_COLOR; }
+     while(arguments.read("--replace-alpha-with-luminance")) { colourSpaceOperation = osg::REPLACE_ALPHA_WITH_LUMINANCE; }
++    while(arguments.read("--replace-alpha-with-luminance-inverted")) { colourSpaceOperation = osg::REPLACE_ALPHA_WITH_LUMINANCE_INVERTED; }
+     while(arguments.read("--replace-rgb-with-luminance")) { colourSpaceOperation = osg::REPLACE_RGB_WITH_LUMINANCE; }
++    
+ 
+ 
+     enum RescaleOperation
+diff --git a/include/osg/AlphaFunc b/include/osg/AlphaFunc
+index 9535865..7162ad1 100644
+--- a/include/osg/AlphaFunc
++++ b/include/osg/AlphaFunc
+@@ -38,9 +38,9 @@ class OSG_EXPORT AlphaFunc : public StateAttribute
+ 
+         AlphaFunc();
+ 
+-        AlphaFunc(ComparisonFunction func,float ref):
++        AlphaFunc(ComparisonFunction func,float ref_in):
+             _comparisonFunc(func),
+-            _referenceValue(ref) {}
++            _referenceValue(ref_in) {}
+ 
+         /** Copy constructor using CopyOp to manage deep vs shallow copy. */
+         AlphaFunc(const AlphaFunc& af,const CopyOp& copyop=CopyOp::SHALLOW_COPY):
+@@ -70,10 +70,10 @@ class OSG_EXPORT AlphaFunc : public StateAttribute
+             return true;
+         }
+ 
+-        inline void setFunction(ComparisonFunction func,float ref)
++        inline void setFunction(ComparisonFunction func,float ref_in)
+         {
+             _comparisonFunc = func;
+-            _referenceValue = ref;
++            _referenceValue = ref_in;
+         }
+ 
+         inline void setFunction(ComparisonFunction func) { _comparisonFunc=func; }
+diff --git a/include/osg/ArgumentParser b/include/osg/ArgumentParser
+index 21b8ca3..24f4e9a 100644
+--- a/include/osg/ArgumentParser
++++ b/include/osg/ArgumentParser
+@@ -92,7 +92,7 @@ class OSG_EXPORT ArgumentParser
+ 
+     public:
+ 
+-        ArgumentParser(int* argc,char **argv);
++        ArgumentParser(int* argc_in,char **argv_in);
+ 
+         void setApplicationUsage(ApplicationUsage* usage) { _usage = usage; }
+         ApplicationUsage* getApplicationUsage() { return _usage.get(); }
+diff --git a/include/osg/Array b/include/osg/Array
+index 7155dde..ac2afd5 100644
+--- a/include/osg/Array
++++ b/include/osg/Array
+@@ -393,7 +393,7 @@ class TemplateIndexArray : public IndexArray, public MixinVector<T>
+ 
+         virtual unsigned int getElementSize() const { return sizeof(ElementDataType); }
+         virtual const GLvoid*   getDataPointer() const { if (!this->empty()) return &this->front(); else return 0; }
+-        virtual const GLvoid*   getDataPointer(unsigned int index) const { if (!this->empty()) return &((*this)[index]); else return 0; }
++        virtual const GLvoid*   getDataPointer(unsigned int index_in) const { if (!this->empty()) return &((*this)[index_in]); else return 0; }
+         virtual unsigned int    getTotalDataSize() const { return static_cast<unsigned int>(this->size()*sizeof(T)); }
+         virtual unsigned int    getNumElements() const { return static_cast<unsigned int>(this->size()); }
+         virtual void reserveArray(unsigned int num) { this->reserve(num); }
+@@ -717,10 +717,10 @@ template<typename T, Array::Type ARRAYTYPE, int DataSize, int DataType>
+ inline void TemplateIndexArray<T,ARRAYTYPE,DataSize,DataType>::accept(ConstArrayVisitor& av) const { av.apply(*this); }
+ 
+ template<typename T, Array::Type ARRAYTYPE, int DataSize, int DataType>
+-inline void TemplateIndexArray<T,ARRAYTYPE,DataSize,DataType>::accept(unsigned int index,ValueVisitor& vv) { vv.apply( (*this)[index] ); }
++inline void TemplateIndexArray<T,ARRAYTYPE,DataSize,DataType>::accept(unsigned int index_in,ValueVisitor& vv) { vv.apply( (*this)[index_in] ); }
+ 
+ template<typename T, Array::Type ARRAYTYPE, int DataSize, int DataType>
+-inline void TemplateIndexArray<T,ARRAYTYPE,DataSize,DataType>::accept(unsigned int index,ConstValueVisitor& vv) const {  vv.apply( (*this)[index] );}
++inline void TemplateIndexArray<T,ARRAYTYPE,DataSize,DataType>::accept(unsigned int index_in,ConstValueVisitor& vv) const {  vv.apply( (*this)[index_in] );}
+ 
+ }
+ 
+diff --git a/include/osg/BoundingSphere b/include/osg/BoundingSphere
+index 4502e45..c400bfe 100644
+--- a/include/osg/BoundingSphere
++++ b/include/osg/BoundingSphere
+@@ -67,10 +67,10 @@ class BoundingSphereImpl
+         inline bool operator != (const BoundingSphereImpl& rhs) const { return _center!=rhs._center || _radius!=rhs._radius; }
+ 
+         /** Set the bounding sphere to the given center/radius using floats. */
+-        inline void set(const vec_type& center,value_type radius)
++        inline void set(const vec_type& center_in,value_type radius_in)
+         {
+-            _center = center;
+-            _radius = radius;
++            _center = center_in;
++            _radius = radius_in;
+         }
+ 
+         /** Returns the center of the bounding sphere. */
+diff --git a/include/osg/GraphicsContext b/include/osg/GraphicsContext
+index 33d7b0b..832e8fc 100644
+--- a/include/osg/GraphicsContext
++++ b/include/osg/GraphicsContext
+@@ -51,7 +51,7 @@ class OSG_EXPORT GraphicsContext : public Object
+               * Note, if either of displayNum or screenNum are not defined then -1 is set to
+               * signify that this parameter has not been set. When parameters are undefined one can call
+               * call setUndefinedScreenDetailsToDefaultScreen() after readDISPLAY() to ensure valid values. */
+-            void setScreenIdentifier(const std::string& displayName);
++            void setScreenIdentifier(const std::string& displayName_in);
+ 
+             /** Set any undefined displayNum or screenNum values (i.e. -1) to the default display & screen of 0 respectively.*/
+             void setUndefinedScreenDetailsToDefaultScreen()
+diff --git a/include/osg/Identifier b/include/osg/Identifier
+index 24d6160..1120429 100644
+--- a/include/osg/Identifier
++++ b/include/osg/Identifier
+@@ -52,7 +52,7 @@ public:
+     const int& number() const { return _number; }
+ 
+ protected:
+-    Identifier(const std::string& name, int number, osg::Referenced* f, osg::Referenced* s);
++    Identifier(const std::string& name_in, int number_in, osg::Referenced* f, osg::Referenced* s);
+     virtual ~Identifier();
+ 
+     virtual void objectDeleted(void* ptr);
+diff --git a/include/osg/Image b/include/osg/Image
+index 28c2842..9a72df3 100644
+--- a/include/osg/Image
++++ b/include/osg/Image
+@@ -226,16 +226,16 @@ class OSG_EXPORT Image : public BufferData
+ 
+ 
+         /** Allocate a pixel block of specified size and type. */
+-        virtual void allocateImage(int s,int t,int r,
++        virtual void allocateImage(int s_in,int t_in,int r_in,
+                            GLenum pixelFormat,GLenum type,
+                            int packing=1);
+ 
+ 
+         /** Set the image dimensions, format and data. */
+-        virtual void setImage(int s,int t,int r,
++        virtual void setImage(int s_in,int t_in,int r_in,
+                       GLint internalTextureformat,
+                       GLenum pixelFormat,GLenum type,
+-                      unsigned char* data,
++                      unsigned char* data_in,
+                       AllocationMode mode,
+                       int packing=1, int rowLength=0);
+ 
+@@ -255,10 +255,10 @@ class OSG_EXPORT Image : public BufferData
+         void swap(osg::Image& rhs);
+ 
+         /** Scale image to specified size. */
+-        void scaleImage(int s,int t,int r) { scaleImage(s,t,r, getDataType()); }
++        void scaleImage(int s_in,int t_in,int r_in) { scaleImage(s_in,t_in,r_in, getDataType()); }
+ 
+         /** Scale image to specified size and with specified data type. */
+-        virtual void scaleImage(int s,int t,int r, GLenum newDataType);
++        virtual void scaleImage(int s_in,int t_in,int r_in, GLenum newDataType);
+ 
+         /** Copy a source Image into a subpart of this Image at specified position.
+           * Typically used to copy to an already allocated image, such as creating
+@@ -405,7 +405,7 @@ class OSG_EXPORT Image : public BufferData
+         };
+ 
+         /** Get the color value for specified texcoord.*/
+-        Vec4 getColor(unsigned int s,unsigned t=0,unsigned r=0) const;
++        Vec4 getColor(unsigned int s_in,unsigned t_in=0,unsigned r_in=0) const;
+ 
+         /** Get the color value for specified texcoord.*/
+         Vec4 getColor(const Vec2& texcoord) const { return getColor(Vec3(texcoord.x(),texcoord.y(),0.0f)); }
+@@ -451,9 +451,9 @@ class OSG_EXPORT Image : public BufferData
+         static unsigned int computePixelSizeInBits(GLenum pixelFormat,GLenum type);
+         static unsigned int computeRowWidthInBytes(int width,GLenum pixelFormat,GLenum type,int packing);
+         static unsigned int computeImageSizeInBytes(int width,int height, int depth, GLenum pixelFormat, GLenum type, int packing = 1, int slice_packing = 1, int image_packing = 1);
+-        static int roudUpToMultiple(int s, int pack);
+-        static int computeNearestPowerOfTwo(int s,float bias=0.5f);
+-        static int computeNumberOfMipmapLevels(int s,int t = 1, int r = 1);
++        static int roudUpToMultiple(int s_in, int pack);
++        static int computeNearestPowerOfTwo(int s_in,float bias=0.5f);
++        static int computeNumberOfMipmapLevels(int s_in,int t_in = 1, int r_in = 1);
+ 
+         /** Precomputed mipmaps stuff. */
+         typedef std::vector< unsigned int > MipmapDataType;
+@@ -574,7 +574,7 @@ class OSG_EXPORT Image : public BufferData
+ 
+         void deallocateData();
+ 
+-        void setData(unsigned char* data,AllocationMode allocationMode);
++        void setData(unsigned char* data_in,AllocationMode allocationMode);
+ 
+         MipmapDataType _mipmapData;
+ 
+diff --git a/include/osg/ImageSequence b/include/osg/ImageSequence
+index 29297dc..e5fada6 100644
+--- a/include/osg/ImageSequence
++++ b/include/osg/ImageSequence
+@@ -42,7 +42,7 @@ class OSG_EXPORT ImageSequence : public ImageStream
+         /** Return -1 if *this < *rhs, 0 if *this==*rhs, 1 if *this>*rhs. */
+         virtual int compare(const Image& rhs) const;
+ 
+-        virtual void setReferenceTime(double t) { _referenceTime = t; }
++        virtual void setReferenceTime(double t_in) { _referenceTime = t_in; }
+         virtual double getReferenceTime() const { return _referenceTime; }
+ 
+         virtual void setTimeMultiplier(double tm) { _timeMultiplier = tm; }
+@@ -94,12 +94,12 @@ class OSG_EXPORT ImageSequence : public ImageStream
+ 
+         template<class  T> void addImage(const osg::ref_ptr<T>& image) { addImage(image.get()); }
+ 
+-        void setImage(int s,int t,int r,
++        void setImage(int s_in,int t_in,int r_in,
+                       GLint internalTextureformat,
+                       GLenum pixelFormat,GLenum type,
+-                      unsigned char* data,
++                      unsigned char* data_in,
+                       AllocationMode mode,
+-                      int packing=1) { Image::setImage(s,t,r,internalTextureformat, pixelFormat, type, data, mode, packing); }
++                      int packing=1) { Image::setImage(s_in,t_in,r_in,internalTextureformat, pixelFormat, type, data_in, mode, packing); }
+ 
+         void setImage(unsigned int pos, osg::Image* image);
+ 
+diff --git a/include/osg/ImageUtils b/include/osg/ImageUtils
+index a79d739..9ce09fd 100644
+--- a/include/osg/ImageUtils
++++ b/include/osg/ImageUtils
+@@ -233,6 +233,7 @@ enum ColorSpaceOperation
+     MODULATE_ALPHA_BY_LUMINANCE,
+     MODULATE_ALPHA_BY_COLOR,
+     REPLACE_ALPHA_WITH_LUMINANCE,
++    REPLACE_ALPHA_WITH_LUMINANCE_INVERTED,
+     REPLACE_RGB_WITH_LUMINANCE
+ };
+ 
+diff --git a/include/osg/Matrixd b/include/osg/Matrixd
+index b9e3940..a4fcacc 100644
+--- a/include/osg/Matrixd
++++ b/include/osg/Matrixd
+@@ -33,8 +33,8 @@ class OSG_EXPORT Matrixd
+         inline Matrixd() { makeIdentity(); }
+         inline Matrixd( const Matrixd& mat) { set(mat.ptr()); }
+         Matrixd( const Matrixf& mat );
+-        inline explicit Matrixd( float const * const ptr ) { set(ptr); }
+-        inline explicit Matrixd( double const * const ptr ) { set(ptr); }
++        inline explicit Matrixd( float const * const ptr_in ) { set(ptr_in); }
++        inline explicit Matrixd( double const * const ptr_in ) { set(ptr_in); }
+         inline explicit Matrixd( const Quat& quat ) { makeRotate(quat); }
+ 
+         Matrixd(value_type a00, value_type a01, value_type a02, value_type a03,
+@@ -72,16 +72,16 @@ class OSG_EXPORT Matrixd
+ 
+         void set(const Matrixf& rhs);
+ 
+-        inline void set(float const * const ptr)
++        inline void set(float const * const ptr_in)
+         {
+             value_type* local_ptr = (value_type*)_mat;
+-            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr[i];
++            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr_in[i];
+         }
+ 
+-        inline void set(double const * const ptr)
++        inline void set(double const * const ptr_in)
+         {
+             value_type* local_ptr = (value_type*)_mat;
+-            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr[i];
++            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr_in[i];
+         }
+ 
+         void set(value_type a00, value_type a01, value_type a02,value_type a03,
+diff --git a/include/osg/Matrixf b/include/osg/Matrixf
+index e9bcfbb..43ea877 100644
+--- a/include/osg/Matrixf
++++ b/include/osg/Matrixf
+@@ -33,8 +33,8 @@ class OSG_EXPORT Matrixf
+         inline Matrixf() { makeIdentity(); }
+         inline Matrixf( const Matrixf& mat) { set(mat.ptr()); }
+         Matrixf( const Matrixd& mat );
+-        inline explicit Matrixf( float const * const ptr ) { set(ptr); }
+-        inline explicit Matrixf( double const * const ptr ) { set(ptr); }
++        inline explicit Matrixf( float const * const ptr_in ) { set(ptr_in); }
++        inline explicit Matrixf( double const * const ptr_in ) { set(ptr_in); }
+         inline explicit Matrixf( const Quat& quat ) { makeRotate(quat); }
+ 
+         Matrixf( value_type a00, value_type a01, value_type a02, value_type a03,
+@@ -72,16 +72,16 @@ class OSG_EXPORT Matrixf
+ 
+         void set(const Matrixd& rhs);
+ 
+-        inline void set(float const * const ptr)
++        inline void set(float const * const ptr_in)
+         {
+             value_type* local_ptr = (value_type*)_mat;
+-            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr[i];
++            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr_in[i];
+         }
+ 
+-        inline void set(double const * const ptr)
++        inline void set(double const * const ptr_in)
+         {
+             value_type* local_ptr = (value_type*)_mat;
+-            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr[i];
++            for(int i=0;i<16;++i) local_ptr[i]=(value_type)ptr_in[i];
+         }
+ 
+         void set(value_type a00, value_type a01, value_type a02,value_type a03,
+diff --git a/include/osg/Quat b/include/osg/Quat
+index c8ef76f..4f1fe61 100644
+--- a/include/osg/Quat
++++ b/include/osg/Quat
+@@ -41,12 +41,12 @@ class OSG_EXPORT Quat
+ 
+         inline Quat() { _v[0]=0.0; _v[1]=0.0; _v[2]=0.0; _v[3]=1.0; }
+ 
+-        inline Quat( value_type x, value_type y, value_type z, value_type w )
++        inline Quat( value_type x_in, value_type y_in, value_type z_in, value_type w_in )
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline Quat( const Vec4f& v )
+@@ -119,12 +119,12 @@ class OSG_EXPORT Quat
+             return Vec3d(_v[0], _v[1], _v[2]);
+         }
+ 
+-        inline void set(value_type x, value_type y, value_type z, value_type w)
++        inline void set(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline void set(const osg::Vec4f& v)
+@@ -204,14 +204,14 @@ class OSG_EXPORT Quat
+         /// Unary multiply
+         inline Quat& operator*=(const Quat& rhs)
+         {
+-            value_type x = rhs._v[3]*_v[0] + rhs._v[0]*_v[3] + rhs._v[1]*_v[2] - rhs._v[2]*_v[1];
+-            value_type y = rhs._v[3]*_v[1] - rhs._v[0]*_v[2] + rhs._v[1]*_v[3] + rhs._v[2]*_v[0];
+-            value_type z = rhs._v[3]*_v[2] + rhs._v[0]*_v[1] - rhs._v[1]*_v[0] + rhs._v[2]*_v[3];
++            value_type x_ = rhs._v[3]*_v[0] + rhs._v[0]*_v[3] + rhs._v[1]*_v[2] - rhs._v[2]*_v[1];
++            value_type y_ = rhs._v[3]*_v[1] - rhs._v[0]*_v[2] + rhs._v[1]*_v[3] + rhs._v[2]*_v[0];
++            value_type z_ = rhs._v[3]*_v[2] + rhs._v[0]*_v[1] - rhs._v[1]*_v[0] + rhs._v[2]*_v[3];
+             _v[3]   = rhs._v[3]*_v[3] - rhs._v[0]*_v[0] - rhs._v[1]*_v[1] - rhs._v[2]*_v[2];
+ 
+-            _v[2] = z;
+-            _v[1] = y;
+-            _v[0] = x;
++            _v[2] = z_;
++            _v[1] = y_;
++            _v[0] = x_;
+ 
+             return (*this);            // enable nesting
+         }
+diff --git a/include/osg/Scissor b/include/osg/Scissor
+index e7e25e2..c044348 100644
+--- a/include/osg/Scissor
++++ b/include/osg/Scissor
+@@ -24,11 +24,11 @@ class OSG_EXPORT Scissor : public StateAttribute
+     public :
+         Scissor();
+ 
+-        Scissor(int x,int y,int width,int height):
+-            _x(x),
+-            _y(y),
+-            _width(width),
+-            _height(height) {}
++        Scissor(int x_in,int y_in,int width_in,int height_in):
++            _x(x_in),
++            _y(y_in),
++            _width(width_in),
++            _height(height_in) {}
+ 
+ 
+         /** Copy constructor using CopyOp to manage deep vs shallow copy. */
+@@ -64,20 +64,20 @@ class OSG_EXPORT Scissor : public StateAttribute
+             return true;
+         }
+ 
+-        inline void setScissor(int x,int y,int width,int height)
++        inline void setScissor(int x_in,int y_in,int width_in,int height_in)
+         {
+-            _x = x;
+-            _y = y;
+-            _width = width;
+-            _height = height;
++            _x = x_in;
++            _y = y_in;
++            _width = width_in;
++            _height = height_in;
+         }
+ 
+-        void getScissor(int& x,int& y,int& width,int& height) const
++        void getScissor(int& x_out,int& y_out,int& width_out,int& height_out) const
+         {
+-            x = _x;
+-            y = _y;
+-            width = _width;
+-            height = _height;
++            x_out = _x;
++            y_out = _y;
++            width_out = _width;
++            height_out = _height;
+         }
+ 
+         inline int& x() { return _x; }
+diff --git a/include/osg/Stencil b/include/osg/Stencil
+index 1960c17..798ad7e 100644
+--- a/include/osg/Stencil
++++ b/include/osg/Stencil
+@@ -94,17 +94,17 @@ class OSG_EXPORT Stencil : public StateAttribute
+             ALWAYS = GL_ALWAYS
+         };
+ 
+-        inline void setFunction(Function func,int ref,unsigned int mask)
++        inline void setFunction(Function func,int ref_in,unsigned int mask)
+         {
+             _func = func;
+-            _funcRef = ref;
++            _funcRef = ref_in;
+             _funcMask = mask;
+         }
+ 
+         inline void setFunction(Function func) { _func = func; }
+         inline Function getFunction() const { return _func; }
+ 
+-        inline void setFunctionRef(int ref) { _funcRef=ref; }
++        inline void setFunctionRef(int ref_in) { _funcRef=ref_in; }
+         inline int getFunctionRef() const { return _funcRef; }
+ 
+         inline void setFunctionMask(unsigned int mask) { _funcMask=mask; }
+diff --git a/include/osg/StencilTwoSided b/include/osg/StencilTwoSided
+index 224be39..38a63c0 100644
+--- a/include/osg/StencilTwoSided
++++ b/include/osg/StencilTwoSided
+@@ -74,17 +74,17 @@ class OSG_EXPORT StencilTwoSided : public StateAttribute
+             ALWAYS = GL_ALWAYS
+         };
+ 
+-        inline void setFunction(Face face, Function func,int ref,unsigned int mask)
++        inline void setFunction(Face face, Function func,int ref_in,unsigned int mask)
+         {
+             _func[face] = func;
+-            _funcRef[face] = ref;
++            _funcRef[face] = ref_in;
+             _funcMask[face] = mask;
+         }
+ 
+         inline void setFunction(Face face, Function func) { _func[face] = func; }
+         inline Function getFunction(Face face) const { return _func[face]; }
+ 
+-        inline void setFunctionRef(Face face, int ref) { _funcRef[face]=ref; }
++        inline void setFunctionRef(Face face, int ref_in) { _funcRef[face]=ref_in; }
+         inline int getFunctionRef(Face face) const { return _funcRef[face]; }
+ 
+         inline void setFunctionMask(Face face, unsigned int mask) { _funcMask[face]=mask; }
+diff --git a/include/osg/Texture b/include/osg/Texture
+index e611d77..2d17adc 100644
+--- a/include/osg/Texture
++++ b/include/osg/Texture
+@@ -993,9 +993,9 @@ class OSG_EXPORT Texture : public osg::StateAttribute
+         {
+         public:
+ 
+-            inline TextureObject(Texture* texture, GLuint id, GLenum target):
+-                _id(id),
+-                _profile(target),
++            inline TextureObject(Texture* texture, GLuint id_in, GLenum target_in):
++                _id(id_in),
++                _profile(target_in),
+                 _set(0),
+                 _previous(0),
+                 _next(0),
+@@ -1004,8 +1004,8 @@ class OSG_EXPORT Texture : public osg::StateAttribute
+                 _frameLastUsed(0),
+                 _timeStamp(0) {}
+ 
+-            inline TextureObject(Texture* texture, GLuint id, const TextureProfile& profile):
+-                _id(id),
++            inline TextureObject(Texture* texture, GLuint id_in, const TextureProfile& profile):
++                _id(id_in),
+                 _profile(profile),
+                 _set(0),
+                 _previous(0),
+@@ -1016,16 +1016,16 @@ class OSG_EXPORT Texture : public osg::StateAttribute
+                 _timeStamp(0) {}
+ 
+             inline TextureObject(Texture* texture,
+-                          GLuint    id,
+-                          GLenum    target,
++                          GLuint    id_in,
++                          GLenum    target_in,
+                           GLint     numMipmapLevels,
+                           GLenum    internalFormat,
+                           GLsizei   width,
+                           GLsizei   height,
+                           GLsizei   depth,
+                           GLint     border):
+-                _id(id),
+-                _profile(target,numMipmapLevels,internalFormat,width,height,depth,border),
++                _id(id_in),
++                _profile(target_in,numMipmapLevels,internalFormat,width,height,depth,border),
+                 _set(0),
+                 _previous(0),
+                 _next(0),
+@@ -1034,7 +1034,7 @@ class OSG_EXPORT Texture : public osg::StateAttribute
+                 _frameLastUsed(0),
+                 _timeStamp(0) {}
+ 
+-            inline bool match(GLenum    target,
++            inline bool match(GLenum    target_in,
+                        GLint     numMipmapLevels,
+                        GLenum    internalFormat,
+                        GLsizei   width,
+@@ -1043,7 +1043,7 @@ class OSG_EXPORT Texture : public osg::StateAttribute
+                        GLint     border)
+             {
+                 return isReusable() &&
+-                       _profile.match(target,numMipmapLevels,internalFormat,width,height,depth,border);
++                       _profile.match(target_in,numMipmapLevels,internalFormat,width,height,depth,border);
+             }
+ 
+ 
+diff --git a/include/osg/Timer b/include/osg/Timer
+index ac1a452..d40e482 100644
+--- a/include/osg/Timer
++++ b/include/osg/Timer
+@@ -80,8 +80,8 @@ class OSG_EXPORT Timer {
+ class ElapsedTime
+ {
+     public:
+-        inline ElapsedTime(double* elapsedTime, osg::Timer* timer = 0):
+-            _time(elapsedTime)
++        inline ElapsedTime(double* elapsedTime_in, osg::Timer* timer = 0):
++            _time(elapsedTime_in)
+         {
+             init(timer);
+         }
+diff --git a/include/osg/Uniform b/include/osg/Uniform
+index 22fbc39..467a060 100644
+--- a/include/osg/Uniform
++++ b/include/osg/Uniform
+@@ -96,10 +96,10 @@ class MatrixTemplate
+ 
+         void set(const MatrixTemplate& rhs) { set(rhs.ptr()); }
+ 
+-        void set(value_type const * const ptr)
++        void set(value_type const * const ptr_in)
+         {
+             value_type* local_ptr = (value_type*)_mat;
+-            for(int i=0;i<value_count;++i) local_ptr[i]=ptr[i];
++            for(int i=0;i<value_count;++i) local_ptr[i]=ptr_in[i];
+         }
+ 
+         value_type* ptr() { return (value_type*)_mat; }
+diff --git a/include/osg/Vec2b b/include/osg/Vec2b
+index 67f6cf6..400f885 100644
+--- a/include/osg/Vec2b
++++ b/include/osg/Vec2b
+@@ -40,9 +40,9 @@ class Vec2b
+         /** Constructor that sets all components of the vector to zero */
+         Vec2b() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2b(value_type r, value_type g)
++        Vec2b(value_type r_in, value_type g_in)
+         {
+-            _v[0]=r; _v[1]=g;
++            _v[0]=r_in; _v[1]=g_in;
+         }
+ 
+         inline bool operator == (const Vec2b& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+@@ -59,9 +59,9 @@ class Vec2b
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2b& rhs)
+diff --git a/include/osg/Vec2d b/include/osg/Vec2d
+index 96bc48e..5c516c8 100644
+--- a/include/osg/Vec2d
++++ b/include/osg/Vec2d
+@@ -40,7 +40,7 @@ class Vec2d
+         /** Constructor that sets all components of the vector to zero */
+         Vec2d() {_v[0]=0.0; _v[1]=0.0;}
+ 
+-        Vec2d(value_type x,value_type y) { _v[0]=x; _v[1]=y; }
++        Vec2d(value_type x_in,value_type y_in) { _v[0]=x_in; _v[1]=y_in; }
+ 
+         inline Vec2d(const Vec2f& vec) { _v[0]=vec._v[0]; _v[1]=vec._v[1]; }
+ 
+@@ -61,7 +61,7 @@ class Vec2d
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y ) { _v[0]=x; _v[1]=y; }
++        inline void set( value_type x_in, value_type y_in ) { _v[0]=x_in; _v[1]=y_in; }
+ 
+         inline value_type& operator [] (int i) { return _v[i]; }
+         inline value_type operator [] (int i) const { return _v[i]; }
+diff --git a/include/osg/Vec2f b/include/osg/Vec2f
+index 35d82da..c9c2367 100644
+--- a/include/osg/Vec2f
++++ b/include/osg/Vec2f
+@@ -41,7 +41,7 @@ class Vec2f
+ 
+         /** Constructor that sets all components of the vector to zero */
+         Vec2f() {_v[0]=0.0; _v[1]=0.0;}
+-        Vec2f(value_type x,value_type y) { _v[0]=x; _v[1]=y; }
++        Vec2f(value_type x_in,value_type y_in) { _v[0]=x_in; _v[1]=y_in; }
+ 
+ 
+         inline bool operator == (const Vec2f& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+@@ -58,7 +58,7 @@ class Vec2f
+         inline value_type * ptr() { return _v; }
+         inline const value_type * ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y ) { _v[0]=x; _v[1]=y; }
++        inline void set( value_type x_in, value_type y_in ) { _v[0]=x_in; _v[1]=y_in; }
+         inline void set( const Vec2f& rhs) { _v[0]=rhs._v[0]; _v[1]=rhs._v[1]; }
+ 
+         inline value_type & operator [] (int i) { return _v[i]; }
+diff --git a/include/osg/Vec2i b/include/osg/Vec2i
+index bc26d69..fcddc2b 100644
+--- a/include/osg/Vec2i
++++ b/include/osg/Vec2i
+@@ -33,7 +33,7 @@ class Vec2i
+ 
+         Vec2i() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2i(value_type x, value_type y) { _v[0] = x; _v[1] = y; }
++        Vec2i(value_type x_in, value_type y_in) { _v[0] = x_in; _v[1] = y_in; }
+ 
+         inline bool operator == (const Vec2i& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+         inline bool operator != (const Vec2i& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1]; }
+@@ -47,9 +47,9 @@ class Vec2i
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2i& rhs)
+diff --git a/include/osg/Vec2s b/include/osg/Vec2s
+index 137cc83..7d8ce0b 100644
+--- a/include/osg/Vec2s
++++ b/include/osg/Vec2s
+@@ -31,7 +31,7 @@ class Vec2s
+         /** Constructor that sets all components of the vector to zero */
+         Vec2s() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2s(value_type x, value_type y) { _v[0] = x; _v[1] = y; }
++        Vec2s(value_type x_in, value_type y_in) { _v[0] = x_in; _v[1] = y_in; }
+ 
+         inline bool operator == (const Vec2s& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+         inline bool operator != (const Vec2s& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1]; }
+@@ -45,9 +45,9 @@ class Vec2s
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2s& rhs)
+diff --git a/include/osg/Vec2ub b/include/osg/Vec2ub
+index 4e5c76e..e81c9d1 100644
+--- a/include/osg/Vec2ub
++++ b/include/osg/Vec2ub
+@@ -34,7 +34,7 @@ class Vec2ub
+         /** Constructor that sets all components of the vector to zero */
+         Vec2ub() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2ub(value_type r, value_type g) { _v[0]=r; _v[1]=g; }
++        Vec2ub(value_type r_in, value_type g_in) { _v[0]=r_in; _v[1]=g_in; }
+ 
+         inline bool operator == (const Vec2ub& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+         inline bool operator != (const Vec2ub& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1]; }
+@@ -48,9 +48,9 @@ class Vec2ub
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2ub& rhs)
+diff --git a/include/osg/Vec2ui b/include/osg/Vec2ui
+index 641bc4e..a047763 100644
+--- a/include/osg/Vec2ui
++++ b/include/osg/Vec2ui
+@@ -33,7 +33,7 @@ class Vec2ui
+ 
+         Vec2ui() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2ui(value_type x, value_type y) { _v[0] = x; _v[1] = y; }
++        Vec2ui(value_type x_in, value_type y_in) { _v[0] = x_in; _v[1] = y_in; }
+ 
+         inline bool operator == (const Vec2ui& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+         inline bool operator != (const Vec2ui& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1]; }
+@@ -47,9 +47,9 @@ class Vec2ui
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2ui& rhs)
+diff --git a/include/osg/Vec2us b/include/osg/Vec2us
+index 4649c4c..64f4975 100644
+--- a/include/osg/Vec2us
++++ b/include/osg/Vec2us
+@@ -31,7 +31,7 @@ class Vec2us
+         /** Constructor that sets all components of the vector to zero */
+         Vec2us() { _v[0]=0; _v[1]=0; }
+ 
+-        Vec2us(value_type x, value_type y) { _v[0] = x; _v[1] = y; }
++        Vec2us(value_type x_in, value_type y_in) { _v[0] = x_in; _v[1] = y_in; }
+ 
+         inline bool operator == (const Vec2us& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1]; }
+         inline bool operator != (const Vec2us& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1]; }
+@@ -45,9 +45,9 @@ class Vec2us
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y)
++        inline void set( value_type x_in, value_type y_in)
+         {
+-            _v[0]=x; _v[1]=y;
++            _v[0]=x_in; _v[1]=y_in;
+         }
+ 
+         inline void set( const Vec2us& rhs)
+diff --git a/include/osg/Vec3b b/include/osg/Vec3b
+index 1706e01..a690dff 100644
+--- a/include/osg/Vec3b
++++ b/include/osg/Vec3b
+@@ -37,7 +37,7 @@ class Vec3b
+         /** Constructor that sets all components of the vector to zero */
+         Vec3b() { _v[0]=0; _v[1]=0; _v[2]=0; }
+ 
+-        Vec3b(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3b(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3b& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+ 
+@@ -55,9 +55,9 @@ class Vec3b
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3b& rhs)
+diff --git a/include/osg/Vec3d b/include/osg/Vec3d
+index 1406275..703a80c 100644
+--- a/include/osg/Vec3d
++++ b/include/osg/Vec3d
+@@ -45,7 +45,7 @@ class Vec3d
+ 
+         inline operator Vec3f() const { return Vec3f(static_cast<float>(_v[0]),static_cast<float>(_v[1]),static_cast<float>(_v[2]));}
+ 
+-        Vec3d(value_type x,value_type y,value_type z) { _v[0]=x; _v[1]=y; _v[2]=z; }
++        Vec3d(value_type x_in,value_type y_in,value_type z_in) { _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; }
+         Vec3d(const Vec2d& v2,value_type zz)
+         {
+             _v[0] = v2[0];
+@@ -69,9 +69,9 @@ class Vec3d
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z)
++        inline void set( value_type x_in, value_type y_in, value_type z_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in;
+         }
+ 
+         inline void set( const Vec3d& rhs)
+diff --git a/include/osg/Vec3f b/include/osg/Vec3f
+index c388111..45397f8 100644
+--- a/include/osg/Vec3f
++++ b/include/osg/Vec3f
+@@ -39,7 +39,7 @@ class Vec3f
+ 
+         /** Constructor that sets all components of the vector to zero */
+         Vec3f() { _v[0]=0.0f; _v[1]=0.0f; _v[2]=0.0f;}
+-        Vec3f(value_type x,value_type y,value_type z) { _v[0]=x; _v[1]=y; _v[2]=z; }
++        Vec3f(value_type x_in,value_type y_in,value_type z_in) { _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; }
+         Vec3f(const Vec2f& v2,value_type zz)
+         {
+             _v[0] = v2[0];
+@@ -64,9 +64,9 @@ class Vec3f
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z)
++        inline void set( value_type x_in, value_type y_in, value_type z_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in;
+         }
+ 
+         inline void set( const Vec3f& rhs)
+diff --git a/include/osg/Vec3i b/include/osg/Vec3i
+index 8844600..fe13b19 100644
+--- a/include/osg/Vec3i
++++ b/include/osg/Vec3i
+@@ -33,7 +33,7 @@ class Vec3i
+ 
+         Vec3i() { _v[0]=0; _v[1]=0; _v[2]=0; }
+         
+-        Vec3i(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3i(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3i& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+         inline bool operator != (const Vec3i& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1] || _v[2]!=v._v[2]; }
+@@ -49,9 +49,9 @@ class Vec3i
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3i& rhs)
+diff --git a/include/osg/Vec3s b/include/osg/Vec3s
+index a212606..efd3bb4 100644
+--- a/include/osg/Vec3s
++++ b/include/osg/Vec3s
+@@ -31,7 +31,7 @@ class Vec3s
+         /** Constructor that sets all components of the vector to zero */
+         Vec3s() { _v[0]=0; _v[1]=0; _v[2]=0; }
+ 
+-        Vec3s(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3s(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3s& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+         inline bool operator != (const Vec3s& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1] || _v[2]!=v._v[2]; }
+@@ -47,9 +47,9 @@ class Vec3s
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3s& rhs)
+diff --git a/include/osg/Vec3ub b/include/osg/Vec3ub
+index e862e20..363c68a 100644
+--- a/include/osg/Vec3ub
++++ b/include/osg/Vec3ub
+@@ -37,7 +37,7 @@ class Vec3ub
+         /** Constructor that sets all components of the vector to zero */
+         Vec3ub() { _v[0]=0; _v[1]=0; _v[2]=0; }
+ 
+-        Vec3ub(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3ub(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3ub& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+ 
+@@ -55,9 +55,9 @@ class Vec3ub
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3ub& rhs)
+diff --git a/include/osg/Vec3ui b/include/osg/Vec3ui
+index 126a975..1309d75 100644
+--- a/include/osg/Vec3ui
++++ b/include/osg/Vec3ui
+@@ -33,7 +33,7 @@ class Vec3ui
+ 
+         Vec3ui() { _v[0]=0; _v[1]=0; _v[2]=0; }
+         
+-        Vec3ui(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3ui(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3ui& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+         inline bool operator != (const Vec3ui& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1] || _v[2]!=v._v[2]; }
+@@ -49,9 +49,9 @@ class Vec3ui
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3ui& rhs)
+diff --git a/include/osg/Vec3us b/include/osg/Vec3us
+index 2193920..789e390 100644
+--- a/include/osg/Vec3us
++++ b/include/osg/Vec3us
+@@ -31,7 +31,7 @@ class Vec3us
+         /** Constructor that sets all components of the vector to zero */
+         Vec3us() { _v[0]=0; _v[1]=0; _v[2]=0; }
+ 
+-        Vec3us(value_type r, value_type g, value_type b) { _v[0]=r; _v[1]=g; _v[2]=b;  }
++        Vec3us(value_type r_in, value_type g_in, value_type b_in) { _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;  }
+ 
+         inline bool operator == (const Vec3us& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2]; }
+         inline bool operator != (const Vec3us& v) const { return _v[0]!=v._v[0] || _v[1]!=v._v[1] || _v[2]!=v._v[2]; }
+@@ -47,9 +47,9 @@ class Vec3us
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b)
++        inline void set(value_type r_in, value_type g_in, value_type b_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in;
+         }
+ 
+         inline void set( const Vec3us& rhs)
+diff --git a/include/osg/Vec4b b/include/osg/Vec4b
+index 74b1261..ed18602 100644
+--- a/include/osg/Vec4b
++++ b/include/osg/Vec4b
+@@ -37,12 +37,12 @@ class Vec4b
+         /** Constructor that sets all components of the vector to zero */
+         Vec4b() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4b(value_type x, value_type y, value_type z, value_type w)
++        Vec4b(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4b& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -63,9 +63,9 @@ class Vec4b
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4d b/include/osg/Vec4d
+index b4e376b..28ee172 100644
+--- a/include/osg/Vec4d
++++ b/include/osg/Vec4d
+@@ -40,20 +40,20 @@ class Vec4d
+         /** Constructor that sets all components of the vector to zero */
+         Vec4d() { _v[0]=0.0; _v[1]=0.0; _v[2]=0.0; _v[3]=0.0; }
+ 
+-        Vec4d(value_type x, value_type y, value_type z, value_type w)
++        Vec4d(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+-        Vec4d(const Vec3d& v3,value_type w)
++        Vec4d(const Vec3d& v3,value_type w_in)
+         {
+             _v[0]=v3[0];
+             _v[1]=v3[1];
+             _v[2]=v3[2];
+-            _v[3]=w;
++            _v[3]=w_in;
+         }
+ 
+         inline Vec4d(const Vec4f& vec) { _v[0]=vec._v[0]; _v[1]=vec._v[1]; _v[2]=vec._v[2]; _v[3]=vec._v[3];}
+@@ -79,9 +79,9 @@ class Vec4d
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4f b/include/osg/Vec4f
+index 21a86f1..9739bcd 100644
+--- a/include/osg/Vec4f
++++ b/include/osg/Vec4f
+@@ -42,20 +42,20 @@ class Vec4f
+         /** Constructor that sets all components of the vector to zero */
+         Vec4f() { _v[0]=0.0f; _v[1]=0.0f; _v[2]=0.0f; _v[3]=0.0f;}
+ 
+-        Vec4f(value_type x, value_type y, value_type z, value_type w)
++        Vec4f(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+-        Vec4f(const Vec3f& v3,value_type w)
++        Vec4f(const Vec3f& v3,value_type w_in)
+         {
+             _v[0]=v3[0];
+             _v[1]=v3[1];
+             _v[2]=v3[2];
+-            _v[3]=w;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4f& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -76,9 +76,9 @@ class Vec4f
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4i b/include/osg/Vec4i
+index e29675e..75f6362 100644
+--- a/include/osg/Vec4i
++++ b/include/osg/Vec4i
+@@ -33,12 +33,12 @@ class Vec4i
+ 
+         Vec4i() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4i(value_type x, value_type y, value_type z, value_type w)
++        Vec4i(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4i& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -57,9 +57,9 @@ class Vec4i
+     inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4s b/include/osg/Vec4s
+index b86b43a..55de7c1 100644
+--- a/include/osg/Vec4s
++++ b/include/osg/Vec4s
+@@ -38,12 +38,12 @@ class Vec4s
+         /** Constructor that sets all components of the vector to zero */
+         Vec4s() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4s(value_type x, value_type y, value_type z, value_type w)
++        Vec4s(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4s& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -62,9 +62,9 @@ class Vec4s
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4ub b/include/osg/Vec4ub
+index 418a80b..c9b9817 100644
+--- a/include/osg/Vec4ub
++++ b/include/osg/Vec4ub
+@@ -40,12 +40,12 @@ class Vec4ub
+         /** Constructor that sets all components of the vector to zero */
+         Vec4ub() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4ub(value_type x, value_type y, value_type z, value_type w)
++        Vec4ub(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4ub& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -66,9 +66,9 @@ class Vec4ub
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set(value_type r, value_type g, value_type b, value_type a)
++        inline void set(value_type r_in, value_type g_in, value_type b_in, value_type a_in)
+         {
+-            _v[0]=r; _v[1]=g; _v[2]=b; _v[3]=a;
++            _v[0]=r_in; _v[1]=g_in; _v[2]=b_in; _v[3]=a_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4ui b/include/osg/Vec4ui
+index 059617e..e1681fe 100644
+--- a/include/osg/Vec4ui
++++ b/include/osg/Vec4ui
+@@ -33,12 +33,12 @@ class Vec4ui
+ 
+         Vec4ui() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4ui(value_type x, value_type y, value_type z, value_type w)
++        Vec4ui(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4ui& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -57,9 +57,9 @@ class Vec4ui
+     inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Vec4us b/include/osg/Vec4us
+index 109d56d..3baa28f 100644
+--- a/include/osg/Vec4us
++++ b/include/osg/Vec4us
+@@ -38,12 +38,12 @@ class Vec4us
+         /** Constructor that sets all components of the vector to zero */
+         Vec4us() { _v[0]=0; _v[1]=0; _v[2]=0; _v[3]=0; }
+ 
+-        Vec4us(value_type x, value_type y, value_type z, value_type w)
++        Vec4us(value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x;
+-            _v[1]=y;
+-            _v[2]=z;
+-            _v[3]=w;
++            _v[0]=x_in;
++            _v[1]=y_in;
++            _v[2]=z_in;
++            _v[3]=w_in;
+         }
+ 
+         inline bool operator == (const Vec4us& v) const { return _v[0]==v._v[0] && _v[1]==v._v[1] && _v[2]==v._v[2] && _v[3]==v._v[3]; }
+@@ -62,9 +62,9 @@ class Vec4us
+         inline value_type* ptr() { return _v; }
+         inline const value_type* ptr() const { return _v; }
+ 
+-        inline void set( value_type x, value_type y, value_type z, value_type w)
++        inline void set( value_type x_in, value_type y_in, value_type z_in, value_type w_in)
+         {
+-            _v[0]=x; _v[1]=y; _v[2]=z; _v[3]=w;
++            _v[0]=x_in; _v[1]=y_in; _v[2]=z_in; _v[3]=w_in;
+         }
+ 
+         inline value_type& operator [] (unsigned int i) { return _v[i]; }
+diff --git a/include/osg/Viewport b/include/osg/Viewport
+index a32d4be..d81f49d 100644
+--- a/include/osg/Viewport
++++ b/include/osg/Viewport
+@@ -31,11 +31,11 @@ class OSG_EXPORT Viewport : public StateAttribute
+ #endif
+         Viewport();
+ 
+-        Viewport(value_type x,value_type y,value_type width,value_type height):
+-            _x(x),
+-            _y(y),
+-            _width(width),
+-            _height(height) {}
++        Viewport(value_type x_in,value_type y_in,value_type width_in,value_type height_in):
++            _x(x_in),
++            _y(y_in),
++            _width(width_in),
++            _height(height_in) {}
+ 
+ 
+         /** Copy constructor using CopyOp to manage deep vs shallow copy. */
+@@ -76,12 +76,12 @@ class OSG_EXPORT Viewport : public StateAttribute
+             return *this;
+         }
+ 
+-        inline void setViewport(value_type x,value_type y,value_type width,value_type height)
++        inline void setViewport(value_type x_in,value_type y_in,value_type width_in,value_type height_in)
+         {
+-            _x = x;
+-            _y = y;
+-            _width = width;
+-            _height = height;
++            _x = x_in;
++            _y = y_in;
++            _width = width_in;
++            _height = height_in;
+         }
+ 
+ #if 0
+diff --git a/include/osg/ViewportIndexed b/include/osg/ViewportIndexed
+index 1eda231..9ba588f 100644
+--- a/include/osg/ViewportIndexed
++++ b/include/osg/ViewportIndexed
+@@ -26,8 +26,8 @@ class OSG_EXPORT ViewportIndexed : public Viewport
+ 
+         ViewportIndexed();
+ 
+-        ViewportIndexed(unsigned int index, value_type x,value_type y,value_type width,value_type height):
+-            Viewport(x,y,width,height),
++        ViewportIndexed(unsigned int index, value_type x_in,value_type y_in,value_type width_in,value_type height_in):
++            Viewport(x_in,y_in,width_in,height_in),
+             _index(index) {}
+ 
+         /** Copy constructor using CopyOp to manage deep vs shallow copy. */
+diff --git a/include/osg/buffered_value b/include/osg/buffered_value
+index 53937f3..608923c 100644
+--- a/include/osg/buffered_value
++++ b/include/osg/buffered_value
+@@ -31,8 +31,8 @@ class buffered_value
+             _array(DisplaySettings::instance()->getMaxNumberOfGraphicsContexts(),0)
+             {}
+ 
+-        inline buffered_value(unsigned int size):
+-            _array(size,0)
++        inline buffered_value(unsigned int size_in):
++            _array(size_in,0)
+             {}
+ 
+         buffered_value& operator = (const buffered_value& rhs)
+@@ -83,8 +83,8 @@ class buffered_object
+             _array(DisplaySettings::instance()->getMaxNumberOfGraphicsContexts())
+             {}
+ 
+-        inline buffered_object(unsigned int size):
+-            _array(size)
++        inline buffered_object(unsigned int size_in):
++            _array(size_in)
+             {}
+ 
+         buffered_object& operator = (const buffered_object& rhs)
+diff --git a/include/osgDB/Output b/include/osgDB/Output
+index 316d073..9b31b63 100644
+--- a/include/osgDB/Output
++++ b/include/osgDB/Output
+@@ -57,7 +57,7 @@ class OSGDB_EXPORT Output : public osgDB::ofstream
+         inline void setIndentStep(int step) { _indentStep = step; }
+         inline int getIndentStep() const { return _indentStep; }
+ 
+-        inline void setIndent(int indent)  { _indent = indent; }
++        inline void setIndent(int indent_in)  { _indent = indent_in; }
+         inline int getIndent() const { return _indent; }
+ 
+         inline void setNumIndicesPerLine(int num) { _numIndicesPerLine = num; }
+diff --git a/include/osgDB/ReaderWriter b/include/osgDB/ReaderWriter
+index 0bdffb0..0ee3a60 100644
+--- a/include/osgDB/ReaderWriter
++++ b/include/osgDB/ReaderWriter
+@@ -121,13 +121,13 @@ class OSGDB_EXPORT ReaderWriter : public osg::Object
+                     INSUFFICIENT_MEMORY_TO_LOAD //!< File found but not loaded because estimated required memory surpasses available memory.
+                 };
+ 
+-                ReadResult(ReadStatus status=FILE_NOT_HANDLED):_status(status) {}
++                ReadResult(ReadStatus status_in=FILE_NOT_HANDLED):_status(status_in) {}
+                 ReadResult(const std::string& m):_status(ERROR_IN_READING_FILE),_message(m) {}
+ 
+-                ReadResult(osg::Object* obj, ReadStatus status=FILE_LOADED):_status(status),_object(obj) {}
++                ReadResult(osg::Object* obj, ReadStatus status_in=FILE_LOADED):_status(status_in),_object(obj) {}
+ 
+                 template<class T>
+-                ReadResult(const osg::ref_ptr<T>& obj, ReadStatus status=FILE_LOADED):_status(status),_object(obj.get()) {}
++                ReadResult(const osg::ref_ptr<T>& obj, ReadStatus status_in=FILE_LOADED):_status(status_in),_object(obj.get()) {}
+ 
+                 ReadResult(const ReadResult& rr):_status(rr._status),_message(rr._message),_object(rr._object) {}
+                 ReadResult& operator = (const ReadResult& rr) { if (this==&rr) return *this; _status=rr._status; _message=rr._message;_object=rr._object; return *this; }
+@@ -192,7 +192,7 @@ class OSGDB_EXPORT ReaderWriter : public osg::Object
+                     FILE_SAVED
+                 };
+ 
+-                WriteResult(WriteStatus status=FILE_NOT_HANDLED):_status(status) {}
++                WriteResult(WriteStatus status_in=FILE_NOT_HANDLED):_status(status_in) {}
+                 WriteResult(const std::string& m):_status(ERROR_IN_WRITING_FILE),_message(m) {}
+ 
+                 WriteResult(const WriteResult& rr):_status(rr._status),_message(rr._message) {}
+diff --git a/include/osgDB/Serializer b/include/osgDB/Serializer
+index d25f08c..ba1fe97 100644
+--- a/include/osgDB/Serializer
++++ b/include/osgDB/Serializer
+@@ -788,30 +788,30 @@ public:
+     virtual bool read( InputStream& is, osg::Object& obj )
+     {
+         C& object = OBJECT_CAST<C&>(obj);
+-        unsigned int size = 0;
++        unsigned int size_ = 0;
+         P list;
+         if ( is.isBinary() )
+         {
+-            is >> size;
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+                 list.push_back( value );
+             }
+-            if ( size>0 ) (object.*_setter)( list );
++            if ( size_>0 ) (object.*_setter)( list );
+         }
+         else if ( is.matchString(_name) )
+         {
+-            is >> size;
+-            if ( size>0 ) is >> is.BEGIN_BRACKET;
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            if ( size_>0 ) is >> is.BEGIN_BRACKET;
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+                 list.push_back( value );
+             }
+-            if ( size>0 )
++            if ( size_>0 )
+             {
+                 is >> is.END_BRACKET;
+                 (object.*_setter)( list );
+@@ -824,19 +824,19 @@ public:
+     {
+         const C& object = OBJECT_CAST<const C&>(obj);
+         const P& list = (object.*_getter)();
+-        unsigned int size = (unsigned int)list.size();
++        unsigned int size_ = (unsigned int)list.size();
+         if ( os.isBinary() )
+         {
+-            os << size;
++            os << size_;
+             for ( ConstIterator itr=list.begin();
+                   itr!=list.end(); ++itr )
+             {
+                 os << (*itr);
+             }
+         }
+-        else if ( size>0 )
++        else if ( size_>0 )
+         {
+-            os << os.PROPERTY((_name).c_str()) << size << os.BEGIN_BRACKET << std::endl;
++            os << os.PROPERTY((_name).c_str()) << size_ << os.BEGIN_BRACKET << std::endl;
+             for ( ConstIterator itr=list.begin();
+                   itr!=list.end(); ++itr )
+             {
+@@ -961,32 +961,32 @@ public:
+     virtual bool read( InputStream& is, osg::Object& obj )
+     {
+         C& object = OBJECT_CAST<C&>(obj);
+-        unsigned int size = 0;
++        unsigned int size_ = 0;
+         P list;
+         if ( is.isBinary() )
+         {
+-            is >> size;
+-            list.reserve(size);
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            list.reserve(size_);
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+                 list.push_back( value );
+             }
+-            if ( size>0 ) (object.*_setter)( list );
++            if ( size_>0 ) (object.*_setter)( list );
+         }
+         else if ( is.matchString(_name) )
+         {
+-            is >> size;
+-            list.reserve(size);
+-            if ( size>0 ) is >> is.BEGIN_BRACKET;
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            list.reserve(size_);
++            if ( size_>0 ) is >> is.BEGIN_BRACKET;
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+                 list.push_back( value );
+             }
+-            if ( size>0 )
++            if ( size_>0 )
+             {
+                 is >> is.END_BRACKET;
+                 (object.*_setter)( list );
+@@ -999,19 +999,19 @@ public:
+     {
+         const C& object = OBJECT_CAST<const C&>(obj);
+         const P& list = (object.*_constgetter)();
+-        unsigned int size = (unsigned int)list.size();
++        unsigned int size_ = (unsigned int)list.size();
+         if ( os.isBinary() )
+         {
+-            os << size;
++            os << size_;
+             for ( ConstIterator itr=list.begin();
+                   itr!=list.end(); ++itr )
+             {
+                 os << (*itr);
+             }
+         }
+-        else if ( size>0 )
++        else if ( size_>0 )
+         {
+-            os << os.PROPERTY((_name).c_str()) << size << os.BEGIN_BRACKET << std::endl;
++            os << os.PROPERTY((_name).c_str()) << size_ << os.BEGIN_BRACKET << std::endl;
+             if (_numElementsOnRow==0)
+             {
+                 for ( ConstIterator itr=list.begin(); itr!=list.end(); ++itr )
+@@ -1119,12 +1119,12 @@ public:
+     virtual bool read( InputStream& is, osg::Object& obj )
+     {
+         C& list = OBJECT_CAST<C&>(obj);
+-        unsigned int size = 0;
++        unsigned int size_ = 0;
+         if ( is.isBinary() )
+         {
+-            is >> size;
+-            list.reserve(size);
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            list.reserve(size_);
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+@@ -1133,16 +1133,16 @@ public:
+         }
+         else if ( is.matchString(_name) )
+         {
+-            is >> size;
+-            list.reserve(size);
+-            if ( size>0 ) is >> is.BEGIN_BRACKET;
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            list.reserve(size_);
++            if ( size_>0 ) is >> is.BEGIN_BRACKET;
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 ValueType value;
+                 is >> value;
+                 list.push_back( value );
+             }
+-            if ( size>0 )
++            if ( size_>0 )
+             {
+                 is >> is.END_BRACKET;
+             }
+@@ -1153,19 +1153,19 @@ public:
+     virtual bool write( OutputStream& os, const osg::Object& obj )
+     {
+         const C& list = OBJECT_CAST<const C&>(obj);
+-        unsigned int size = (unsigned int)list.size();
++        unsigned int size_ = (unsigned int)list.size();
+         if ( os.isBinary() )
+         {
+-            os << size;
++            os << size_;
+             for ( ConstIterator itr=list.begin();
+                   itr!=list.end(); ++itr )
+             {
+                 os << (*itr);
+             }
+         }
+-        else if ( size>0 )
++        else if ( size_>0 )
+         {
+-            os << os.PROPERTY((_name).c_str()) << size << os.BEGIN_BRACKET << std::endl;
++            os << os.PROPERTY((_name).c_str()) << size_ << os.BEGIN_BRACKET << std::endl;
+             if (_numElementsOnRow==0)
+             {
+                 for ( ConstIterator itr=list.begin(); itr!=list.end(); ++itr )
+@@ -1381,12 +1381,12 @@ public:
+     virtual bool read( InputStream& is, osg::Object& obj )
+     {
+         C& object = OBJECT_CAST<C&>(obj);
+-        unsigned int size = 0;
++        unsigned int size_ = 0;
+         P map;
+         if ( is.isBinary() )
+         {
+-            is >> size;
+-            for ( unsigned int i=0; i<size; ++i )
++            is >> size_;
++            for ( unsigned int i=0; i<size_; ++i )
+             {
+                 KeyType key;
+                 ElementType value;
+@@ -1397,11 +1397,11 @@ public:
+         }
+         else if ( is.matchString(_name) )
+         {
+-            is >> size;
+-            if ( size>0 )
++            is >> size_;
++            if ( size_>0 )
+             {
+                 is >> is.BEGIN_BRACKET;
+-                for ( unsigned int i=0; i<size; ++i )
++                for ( unsigned int i=0; i<size_; ++i )
+                 {
+                     KeyType key;
+                     ElementType value;
+@@ -1419,19 +1419,19 @@ public:
+     {
+         const C& object = OBJECT_CAST<const C&>(obj);
+         const P& map = (object.*_constgetter)();
+-        unsigned int size = (unsigned int)map.size();
++        unsigned int size_ = (unsigned int)map.size();
+         if ( os.isBinary() )
+         {
+-            os << size;
++            os << size_;
+             for ( ConstIterator itr=map.begin();
+                   itr!=map.end(); ++itr )
+             {
+                 os << itr->first << itr->second;
+             }
+         }
+-        else if ( size>0 )
++        else if ( size_>0 )
+         {
+-            os << os.PROPERTY((_name).c_str()) << size << os.BEGIN_BRACKET << std::endl;
++            os << os.PROPERTY((_name).c_str()) << size_ << os.BEGIN_BRACKET << std::endl;
+             for ( ConstIterator itr=map.begin(); itr!=map.end(); ++itr )
+             {
+                 os << itr->first << itr->second; os << std::endl;
+diff --git a/include/osgGA/CameraManipulator b/include/osgGA/CameraManipulator
+index 25019bf..ae6e03c 100644
+--- a/include/osgGA/CameraManipulator
++++ b/include/osgGA/CameraManipulator
+@@ -166,7 +166,7 @@ class OSGGA_EXPORT CameraManipulator : public GUIEventHandler
+         virtual void init(const GUIEventAdapter& ,GUIActionAdapter&) {}
+ 
+         /** Handle event. Override the handle(..) method in your event handlers to respond to events. */
+-        virtual bool handle(osgGA::Event* event, osg::Object* object, osg::NodeVisitor* nv) { return GUIEventHandler::handle(event, object, nv); }
++        virtual bool handle(osgGA::Event* event_in, osg::Object* object, osg::NodeVisitor* nv) { return GUIEventHandler::handle(event_in, object, nv); }
+ 
+         /** Handle events, return true if handled, false otherwise. */
+         virtual bool handle(const GUIEventAdapter& ea,GUIActionAdapter& us);
+diff --git a/include/osgSim/BlinkSequence b/include/osgSim/BlinkSequence
+index 85b3c57..9608038 100644
+--- a/include/osgSim/BlinkSequence
++++ b/include/osgSim/BlinkSequence
+@@ -54,16 +54,16 @@ class OSGSIM_EXPORT BlinkSequence : public osg::Object
+         META_Object(osgSim,BlinkSequence);
+ 
+         /** add a pulse of specified color and duration to the BlinkSequence.*/
+-        inline void addPulse(double length,const osg::Vec4& color);
++        inline void addPulse(double length,const osg::Vec4& color_in);
+ 
+         /** return the number of pulses. */
+         inline int getNumPulses() const { return _pulseData.size(); }
+ 
+         /** return the pulse data at position i. */
+-        inline void getPulse(unsigned int i, double& length,osg::Vec4& color) const;
++        inline void getPulse(unsigned int i, double& length,osg::Vec4& color_in) const;
+ 
+         /** set pulse of specified color and duration to the BlinkSequence.*/
+-        inline void setPulse(unsigned int i,double length,const osg::Vec4& color);
++        inline void setPulse(unsigned int i,double length,const osg::Vec4& color_in);
+ 
+         /** get the total pulse period of the blink sequence, which is equal to the sum of all the pulse periods.*/
+         inline double getPulsePeriod() const { return _pulsePeriod; }
+@@ -110,25 +110,25 @@ inline double BlinkSequence::localTime(double time) const
+     return time - floor(time/_pulsePeriod)*_pulsePeriod;
+ }
+ 
+-inline void BlinkSequence::addPulse(double length,const osg::Vec4& color)
++inline void BlinkSequence::addPulse(double length,const osg::Vec4& color_in)
+ {
+-    _pulseData.push_back(IntervalColor(length,color));
++    _pulseData.push_back(IntervalColor(length,color_in));
+     _pulsePeriod += length;
+ }
+ 
+-inline void BlinkSequence::getPulse(unsigned int i, double& length, osg::Vec4& color) const
++inline void BlinkSequence::getPulse(unsigned int i, double& length, osg::Vec4& color_out) const
+ {
+     const IntervalColor& ic = _pulseData[i];
+     length = ic.first;
+-    color = ic.second;
++    color_out = ic.second;
+ }
+ 
+-inline void BlinkSequence::setPulse(unsigned int i,double length,const osg::Vec4& color)
++inline void BlinkSequence::setPulse(unsigned int i,double length,const osg::Vec4& color_in)
+ {
+     if( i >= _pulseData.size() ) return;
+     IntervalColor& ic = _pulseData[i];
+     ic.first = length;
+-    ic.second = color;
++    ic.second = color_in;
+ }
+ 
+ inline osg::Vec4 BlinkSequence::color(double time,double length) const
+@@ -157,7 +157,7 @@ inline osg::Vec4 BlinkSequence::color(double time,double length) const
+     // results...
+ 
+     // accumulate final part of the first active pulses.
+-    osg::Vec4 color(itr->second*(itr->first-lt));
++    osg::Vec4 color_(itr->second*(itr->first-lt));
+     double len = length-(itr->first-lt);
+     ++itr;
+     if (itr==_pulseData.end()) itr = _pulseData.begin();
+@@ -166,18 +166,18 @@ inline osg::Vec4 BlinkSequence::color(double time,double length) const
+     while (len>itr->first)
+     {
+         len -= itr->first;
+-        color += itr->second*itr->first;
++        color_ += itr->second*itr->first;
+         ++itr;
+         if (itr==_pulseData.end()) itr = _pulseData.begin();
+     }
+ 
+     // add remaining part of the final pulse.
+-    color += itr->second*len;
++    color_ += itr->second*len;
+ 
+     // normalise the time waited color.
+-    color /= length;
++    color_ /= length;
+ 
+-    return color;
++    return color_;
+ }
+ 
+ }
+diff --git a/include/osgText/String b/include/osgText/String
+index 3fb51e4..0d37735 100644
+--- a/include/osgText/String
++++ b/include/osgText/String
+@@ -32,7 +32,7 @@ class VectorUInt: public std::vector<unsigned int>
+ public:
+     VectorUInt(): vector_type() {}
+     VectorUInt(const VectorUInt &copy): vector_type(copy) {}
+-    VectorUInt(unsigned int* beg, unsigned int* end): vector_type(beg, end) {}
++    VectorUInt(unsigned int* beg, unsigned int* end_in): vector_type(beg, end_in) {}
+     explicit VectorUInt(unsigned int n): vector_type(n) {}
+ };
+ 
+diff --git a/include/osgViewer/ViewerBase b/include/osgViewer/ViewerBase
+index 82ae033..6fe8f32 100644
+--- a/include/osgViewer/ViewerBase
++++ b/include/osgViewer/ViewerBase
+@@ -133,7 +133,7 @@ class OSGVIEWER_EXPORT ViewerBase : public virtual osg::Object
+ 
+ 
+         /** Set the done flag to signal the viewer's work is done and should exit the frame loop.*/
+-        void setDone(bool done) { _done = done; }
++        void setDone(bool done_in) { _done = done_in; }
+ 
+         /** Return true if  viewer's work is done and should exit the frame loop.*/
+         bool done() const { return _done; }
+diff --git a/include/osgWidget/StyleManager b/include/osgWidget/StyleManager
+index ccf6e3f..dc3d5fa 100644
+--- a/include/osgWidget/StyleManager
++++ b/include/osgWidget/StyleManager
+@@ -134,14 +134,14 @@ class OSGWIDGET_EXPORT StyleManager: public osg::Object
+         bool _coerceAndApply(
+             osg::Object*       obj,
+             const std::string& style,
+-            const std::string& className
++            const std::string& className_in
+         ) {
+             T* t = dynamic_cast<T*>(obj);
+ 
+             if(!t) {
+                 warn()
+                     << "An attempt was made to coerce Object [" << obj->getName()
+-                    << "] into a " << className << " but failed." << std::endl
++                    << "] into a " << className_in << " but failed." << std::endl
+                 ;
+ 
+                 return 0;
+diff --git a/include/osgWidget/Window b/include/osgWidget/Window
+index de0833c..f089605 100644
+--- a/include/osgWidget/Window
++++ b/include/osgWidget/Window
+@@ -480,15 +480,15 @@ class OSGWIDGET_EXPORT Window:
+         template<typename T>
+         point_type _forEachAssignOrApply(
+             Getter get,
+-            int    begin,
+-            int    end,
++            int    begin_in,
++            int    end_in,
+             int    add,
+             bool   assign
+         ) const {
+             point_type   val = 0.0f;
+-            unsigned int c   = begin;
++            unsigned int c   = begin_in;
+ 
+-            ConstIterator e = end > 0 ? _objects.begin() + end : _objects.end() + end;
++            ConstIterator e = end_in > 0 ? _objects.begin() + end_in : _objects.end() + end_in;
+ 
+             // I WARNED YOU! If you try and understand what this does your head will
+             // explode! But let me say a few things: in MSVC you can't add to an iterator
+@@ -499,7 +499,7 @@ class OSGWIDGET_EXPORT Window:
+             // count variable called "c" that makes sure our iterator's opterator+()
+             // method is safe to call.
+             for(
+-                ConstIterator i = _objects.begin() + begin;
++                ConstIterator i = _objects.begin() + begin_in;
+                 i < e;
+                 c += add
+             ) {
+@@ -546,11 +546,11 @@ class OSGWIDGET_EXPORT Window:
+         template<typename T>
+         point_type _compare(
+             Getter get,
+-            int    begin = 0,
+-            int    end   = 0,
++            int    begin_in = 0,
++            int    end_in   = 0,
+             int    add   = 1
+         ) const {
+-            return _forEachAssignOrApply<T>(get, begin, end, add, true);
++            return _forEachAssignOrApply<T>(get, begin_in, end_in, add, true);
+         }
+ 
+         // This method will return the T'th value accumulated by applying the Getter member
+@@ -560,11 +560,11 @@ class OSGWIDGET_EXPORT Window:
+         template<typename T>
+         point_type _accumulate(
+             Getter get,
+-            int    begin = 0,
+-            int    end   = 0,
++            int    begin_in = 0,
++            int    end_in   = 0,
+             int    add   = 1
+         ) const {
+-            return _forEachAssignOrApply<T>(get, begin, end, add, false);
++            return _forEachAssignOrApply<T>(get, begin_in, end_in, add, false);
+         }
+ 
+         osg::Geode* _geode() {
+diff --git a/osg.diff b/osg.diff
+index 7ceb4a8..d834bed 100755
+--- a/osg.diff
++++ b/osg.diff
+@@ -1,218 +0,0 @@
+-diff --git a/examples/osgpoints/osgpoints.cpp b/examples/osgpoints/osgpoints.cpp
+-index 3df360f..dc0945e 100644
+---- a/examples/osgpoints/osgpoints.cpp
+-+++ b/examples/osgpoints/osgpoints.cpp
+-@@ -36,6 +36,7 @@ public:
+-             _stateset(stateset)
+-         {
+-             _point = new osg::Point;
+-+            _point->setSize(1.0);
+-             _point->setDistanceAttenuation(osg::Vec3(0.0,0.0000,0.05f));
+-             _stateset->setAttribute(_point.get());
+-         }
+-@@ -119,8 +120,7 @@ int main( int argc, char **argv )
+-     arguments.getApplicationUsage()->addCommandLineOption("--points","Sets the polygon mode to GL_POINT for front and back faces.");
+- 
+- 
+--    // construct the viewer.
+--    osgViewer::Viewer viewer;
+-+    
+- 
+-     bool shader = false;
+-     while (arguments.read("--shader")) shader = true;
+-@@ -143,6 +143,9 @@ int main( int argc, char **argv )
+-         arguments.getApplicationUsage()->write(std::cout,osg::ApplicationUsage::COMMAND_LINE_OPTION);
+-         return 1;
+-     }
+-+    
+-+    // construct the viewer.
+-+    osgViewer::Viewer viewer(arguments);
+- 
+-     // read the scene from the list of file specified commandline args.
+-     osg::ref_ptr<osg::Node> loadedModel = osgDB::readRefNodeFiles(arguments);
+-@@ -213,7 +216,6 @@ int main( int argc, char **argv )
+- 
+-         osg::Shader* vertex_shader = new osg::Shader(osg::Shader::VERTEX, vertexShaderSource);
+-         program->addShader(vertex_shader);
+--
+- #if 0
+-         //////////////////////////////////////////////////////////////////
+-         // fragment shader
+-@@ -221,7 +223,10 @@ int main( int argc, char **argv )
+-         char fragmentShaderSource[] =
+-             "void main(void) \n"
+-             "{ \n"
+--            "    gl_FragColor = gl_Color; \n"
+-+            "    gl_FragColor[0] = gl_Color[0]/255.0;\n"
+-+            "    gl_FragColor[1] = gl_Color[1]/255.0;\n"
+-+            "    gl_FragColor[2] = gl_Color[2]/255.0;\n"
+-+            "    gl_FragColor[3] = gl_Color[3]/255.0;\n"
+-             "}\n";
+- 
+-         osg::Shader* fragment_shader = new osg::Shader(osg::Shader::FRAGMENT, fragmentShaderSource);
+-diff --git a/examples/osgvolume/osgvolume.cpp b/examples/osgvolume/osgvolume.cpp
+-index 0390ca9..eb448f5 100644
+---- a/examples/osgvolume/osgvolume.cpp
+-+++ b/examples/osgvolume/osgvolume.cpp
+-@@ -420,8 +420,10 @@ int main( int argc, char **argv )
+-     arguments.getApplicationUsage()->addCommandLineOption("--s_maxTextureSize <size>","Set the texture maximum resolution in the s (x) dimension.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--t_maxTextureSize <size>","Set the texture maximum resolution in the t (y) dimension.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--r_maxTextureSize <size>","Set the texture maximum resolution in the r (z) dimension.");
+-+    arguments.getApplicationUsage()->addCommandLineOption("--modulate-alpha-by-colour <colourModulate.x()> <colourModulate.y()> <colourModulate.z()> <colourModulate.w()>","For each pixel multiply the alpha value by the color.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--modulate-alpha-by-luminance","For each pixel multiply the alpha value by the luminance.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--replace-alpha-with-luminance","For each pixel set the alpha value to the luminance.");
+-+    arguments.getApplicationUsage()->addCommandLineOption("--replace-alpha-with-luminance-inverted","For each pixel set the alpha value to 1-luminance.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--replace-rgb-with-luminance","For each rgb pixel convert to the luminance.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--num-components <num>","Set the number of components to in he target image.");
+-     arguments.getApplicationUsage()->addCommandLineOption("--no-rescale","Disable the rescaling of the pixel data to 0.0 to 1.0 range");
+-@@ -566,7 +568,9 @@ int main( int argc, char **argv )
+-     while(arguments.read("--modulate-alpha-by-luminance")) { colourSpaceOperation = osg::MODULATE_ALPHA_BY_LUMINANCE; }
+-     while(arguments.read("--modulate-alpha-by-colour", colourModulate.x(),colourModulate.y(),colourModulate.z(),colourModulate.w() )) { colourSpaceOperation = osg::MODULATE_ALPHA_BY_COLOR; }
+-     while(arguments.read("--replace-alpha-with-luminance")) { colourSpaceOperation = osg::REPLACE_ALPHA_WITH_LUMINANCE; }
+-+    while(arguments.read("--replace-alpha-with-luminance-inverted")) { colourSpaceOperation = osg::REPLACE_ALPHA_WITH_LUMINANCE_INVERTED; }
+-     while(arguments.read("--replace-rgb-with-luminance")) { colourSpaceOperation = osg::REPLACE_RGB_WITH_LUMINANCE; }
+-+    
+- 
+- 
+-     enum RescaleOperation
+-diff --git a/include/osg/ImageUtils b/include/osg/ImageUtils
+-index a79d739..9ce09fd 100644
+---- a/include/osg/ImageUtils
+-+++ b/include/osg/ImageUtils
+-@@ -233,6 +233,7 @@ enum ColorSpaceOperation
+-     MODULATE_ALPHA_BY_LUMINANCE,
+-     MODULATE_ALPHA_BY_COLOR,
+-     REPLACE_ALPHA_WITH_LUMINANCE,
+-+    REPLACE_ALPHA_WITH_LUMINANCE_INVERTED,
+-     REPLACE_RGB_WITH_LUMINANCE
+- };
+- 
+-diff --git a/src/osg/ImageUtils.cpp b/src/osg/ImageUtils.cpp
+-index 6131630..b94ac71 100644
+---- a/src/osg/ImageUtils.cpp
+-+++ b/src/osg/ImageUtils.cpp
+-@@ -643,6 +643,17 @@ struct ReplaceAlphaWithLuminanceOperator
+-     inline void rgba(float& r,float& g,float& b,float& a) const { float l = (r+g+b)*0.3333333; a = l; }
+- };
+- 
+-+struct ReplaceAlphaWithLuminanceInvertedOperator
+-+{
+-+    ReplaceAlphaWithLuminanceInvertedOperator() {}
+-+
+-+    inline void luminance(float&) const {}
+-+    inline void alpha(float&) const {}
+-+    inline void luminance_alpha(float& l,float& a) const { a = 1.0-l; }
+-+    inline void rgb(float&,float&,float&) const { }
+-+    inline void rgba(float& r,float& g,float& b,float& a) const { float l = (r+g+b)*0.3333333; a = 1.0-l; }
+-+};
+-+
+- osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, const osg::Vec4& colour)
+- {
+-     GLenum requiredPixelFormat = image->getPixelFormat();
+-@@ -651,6 +662,7 @@ osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, cons
+-         case (MODULATE_ALPHA_BY_LUMINANCE):
+-         case (MODULATE_ALPHA_BY_COLOR):
+-         case (REPLACE_ALPHA_WITH_LUMINANCE):
+-+        case (REPLACE_ALPHA_WITH_LUMINANCE_INVERTED):
+-             if (image->getPixelFormat()==GL_RGB || image->getPixelFormat()==GL_BGR) requiredPixelFormat = GL_RGBA;
+-             break;
+-         case (REPLACE_RGB_WITH_LUMINANCE):
+-@@ -690,6 +702,12 @@ osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, cons
+-             osg::modifyImage(image, ReplaceAlphaWithLuminanceOperator());
+-             return image;
+-         }
+-+        case (REPLACE_ALPHA_WITH_LUMINANCE_INVERTED):
+-+        {
+-+            OSG_NOTICE<<"doing conversion REPLACE_ALPHA_WITH_LUMINANCE_INVERTED"<<std::endl;
+-+            osg::modifyImage(image, ReplaceAlphaWithLuminanceInvertedOperator());
+-+            return image;
+-+        }
+-         case (REPLACE_RGB_WITH_LUMINANCE):
+-         {
+-             OSG_NOTICE<<"doing conversion REPLACE_RGB_WITH_LUMINANCE"<<std::endl;
+-diff --git a/src/osgPlugins/las/ReaderWriterLAS.cpp b/src/osgPlugins/las/ReaderWriterLAS.cpp
+-index f5ab0e3..d54806f 100644
+---- a/src/osgPlugins/las/ReaderWriterLAS.cpp
+-+++ b/src/osgPlugins/las/ReaderWriterLAS.cpp
+-@@ -28,6 +28,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-             supportsExtension("las", "LAS point cloud format");
+-             supportsExtension("laz", "compressed LAS point cloud format");
+-             supportsOption("v", "Verbose output");
+-+            supportsOption("d", "Debug output");
+-             supportsOption("noScale", "don't scale vertices according to las haeder - put schale in matixTransform");
+-             supportsOption("noReCenter", "don't transform vertex coords to re-center the pointcloud");
+-         }
+-@@ -54,6 +55,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-         virtual ReadResult readNode(std::istream& ifs, const Options* options) const {
+-             // Reading options
+-             bool _verbose = false;
+-+            bool _debug = false;
+-             bool _scale = true;
+-             bool _recenter = true;
+-             if (options)
+-@@ -66,6 +68,10 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-                     {
+-                         _verbose = true;
+-                     }
+-+                    if (opt == "d")
+-+                    {
+-+                        _debug = true;
+-+                    }
+-                     if (opt == "noScale")
+-                     {
+-                         _scale = false;
+-@@ -127,10 +133,21 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+- 
+-                 // Extract color components from LAS point
+-                 liblas::Color c = p.GetColor();
+-+                /*
+-                 uint32_t r = c.GetRed() >> 8;
+-                 uint32_t g = c.GetGreen() >> 8;
+-                 uint32_t b = c.GetBlue() >> 8;
+--                uint32_t a = 255;    // default value, since LAS point has no alpha information
+-+                
+-+                */
+-+                /*
+-+                float r = c.GetRed()/255.0;
+-+                float g = c.GetGreen()/255.0;
+-+                float b = c.GetBlue()/255.0;
+-+                float a = 1.0;*/    // default value, since LAS point has no alpha information
+-+                uint32_t r = c.GetRed();
+-+                uint32_t g = c.GetGreen();
+-+                uint32_t b = c.GetBlue();
+-+                uint32_t a = 255;
+- 
+-                 if (vertices->size() == 0)
+-                 {
+-@@ -141,7 +158,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-                 {
+-                     if (singleColor)
+-                     {
+--                        singleColor = singleColorValue == c;//set false if different color found
+-+                        singleColor = (singleColorValue == c);//set false if different color found
+-                     }
+-                 }
+-                 if (vertices->size() >= targetNumVertices)
+-@@ -196,7 +213,12 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-                 colours->push_back(osg::Vec4ub(r, g, b, a));
+- 
+-                 // Warning: Printing zillion of points may take looong time
+--                //std::cout << i << ". " << p << '\n';
+-+                if (_debug)
+-+                {
+-+                    std::cout << i << ". " << p << '\n';
+-+                    std::cout << "Color: " << r << "," << g << "," << b << '\n';
+-+                    std::cout << "SingleColor: " << singleColor << '\n';
+-+                }
+-                 i++;
+-             }
+-             // calculate the mid point of the point cloud
+-@@ -229,7 +251,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+-                     << std::endl << std::endl;
+-             }
+- 
+--            geometry->setUseDisplayList(true);
+-+            geometry->setUseDisplayList(false);
+-             geometry->setUseVertexBufferObjects(true);
+-             geometry->setVertexArray(vertices);
+-             if (singleColor)
+diff --git a/src/osg/ArgumentParser.cpp b/src/osg/ArgumentParser.cpp
+index c1fb6fc..9aa5a08 100644
+--- a/src/osg/ArgumentParser.cpp
++++ b/src/osg/ArgumentParser.cpp
+@@ -180,9 +180,9 @@ bool ArgumentParser::Parameter::assign(const char* str)
+ 
+ 
+ 
+-ArgumentParser::ArgumentParser(int* argc,char **argv):
+-    _argc(argc),
+-    _argv(argv),
++ArgumentParser::ArgumentParser(int* argc_in,char **argv_in):
++    _argc(argc_in),
++    _argv(argv_in),
+     _usage(ApplicationUsage::instance())
+ {
+ #ifdef __APPLE__
+@@ -200,7 +200,7 @@ ArgumentParser::ArgumentParser(int* argc,char **argv):
+ 
+ #ifdef WIN32
+     // Remove linefeed from last argument if it exist
+-    char* lastline = argc==0 ? 0 : _argv[*argc-1];
++    char* lastline = _argc==0 ? 0 : _argv[*_argc-1];
+     if (lastline)
+     {
+         int len = strlen(lastline);
+diff --git a/src/osg/AttributeDispatchers.cpp b/src/osg/AttributeDispatchers.cpp
+index e3b0d05..d5ece3c 100644
+--- a/src/osg/AttributeDispatchers.cpp
++++ b/src/osg/AttributeDispatchers.cpp
+@@ -114,21 +114,21 @@ public:
+         if (!array) return 0;
+ 
+         Array::Type type = array->getType();
+-        AttributeDispatch* dispatcher = 0;
++        AttributeDispatch* dispatcher_ = 0;
+ 
+         // OSG_NOTICE<<"    array->getType()="<<type<<std::endl;
+         // OSG_NOTICE<<"    _attributeDispatchList.size()="<<_attributeDispatchList.size()<<std::endl;
+ 
+         if ((unsigned int)type<_attributeDispatchList.size())
+         {
+-            dispatcher = _attributeDispatchList[array->getType()].get();
++            dispatcher_ = _attributeDispatchList[array->getType()].get();
+         }
+ 
+-        if (dispatcher)
++        if (dispatcher_)
+         {
+             // OSG_NOTICE<<"   returning dispatcher="<<dispatcher<<std::endl;
+-            dispatcher->assign(array->getDataPointer());
+-            return dispatcher;
++            dispatcher_->assign(array->getDataPointer());
++            return dispatcher_;
+         }
+         else
+         {
+@@ -254,11 +254,11 @@ void AttributeDispatchers::assignVertexAttribDispatchers(unsigned int unit)
+     for(unsigned int i=_vertexAttribDispatchers.size(); i<=unit; ++i)
+     {
+         _vertexAttribDispatchers.push_back(new AttributeDispatchMap());
+-        AttributeDispatchMap& vertexAttribDispatcher = *_vertexAttribDispatchers[i];
+-        vertexAttribDispatcher.targetAssign<GLuint, GLfloat>(i, Array::FloatArrayType, extensions->glVertexAttrib1fv, 1);
+-        vertexAttribDispatcher.targetAssign<GLuint, GLfloat>(i, Array::Vec2ArrayType, extensions->glVertexAttrib2fv, 2);
+-        vertexAttribDispatcher.targetAssign<GLuint, GLfloat>(i, Array::Vec3ArrayType, extensions->glVertexAttrib3fv, 3);
+-        vertexAttribDispatcher.targetAssign<GLuint, GLfloat>(i, Array::Vec4ArrayType, extensions->glVertexAttrib4fv, 4);
++        AttributeDispatchMap& vertexAttribDispatcher_ = *_vertexAttribDispatchers[i];
++        vertexAttribDispatcher_.targetAssign<GLuint, GLfloat>(i, Array::FloatArrayType, extensions->glVertexAttrib1fv, 1);
++        vertexAttribDispatcher_.targetAssign<GLuint, GLfloat>(i, Array::Vec2ArrayType, extensions->glVertexAttrib2fv, 2);
++        vertexAttribDispatcher_.targetAssign<GLuint, GLfloat>(i, Array::Vec3ArrayType, extensions->glVertexAttrib3fv, 3);
++        vertexAttribDispatcher_.targetAssign<GLuint, GLfloat>(i, Array::Vec4ArrayType, extensions->glVertexAttrib4fv, 4);
+     }
+ }
+ 
+diff --git a/src/osg/BufferObject.cpp b/src/osg/BufferObject.cpp
+index e14231c..a0d7415 100644
+--- a/src/osg/BufferObject.cpp
++++ b/src/osg/BufferObject.cpp
+@@ -570,7 +570,7 @@ void GLBufferObjectSet::flushDeletedGLBufferObjects(double /*currentTime*/, doub
+     availableTime -= timer.elapsedTime();
+ }
+ 
+-bool GLBufferObjectSet::makeSpace(unsigned int& size)
++bool GLBufferObjectSet::makeSpace(unsigned int& size_out)
+ {
+     {
+         OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_mutex);
+@@ -584,13 +584,13 @@ bool GLBufferObjectSet::makeSpace(unsigned int& size)
+     if (!_orphanedGLBufferObjects.empty())
+     {
+         unsigned int sizeAvailable = _orphanedGLBufferObjects.size() * _profile._size;
+-        if (size>sizeAvailable) size -= sizeAvailable;
+-        else size = 0;
++        if (size_out>sizeAvailable) size_out -= sizeAvailable;
++        else size_out = 0;
+ 
+         flushAllDeletedGLBufferObjects();
+     }
+ 
+-    return size==0;
++    return size_out==0;
+ }
+ 
+ osg::ref_ptr<GLBufferObject> GLBufferObjectSet::takeFromOrphans(BufferObject* bufferObject)
+diff --git a/src/osg/ClusterCullingCallback.cpp b/src/osg/ClusterCullingCallback.cpp
+index 7219ae6..2a8d274 100644
+--- a/src/osg/ClusterCullingCallback.cpp
++++ b/src/osg/ClusterCullingCallback.cpp
+@@ -62,10 +62,10 @@ struct ComputeAveragesFunctor
+     inline void operator() ( const osg::Vec3 &v1, const osg::Vec3 &v2, const osg::Vec3 &v3)
+     {
+         // calc orientation of triangle.
+-        osg::Vec3d normal = (v2-v1)^(v3-v1);
+-        if (normal.normalize()!=0.0f)
++        osg::Vec3d normal_ = (v2-v1)^(v3-v1);
++        if (normal_.normalize()!=0.0f)
+         {
+-            _normal += normal;
++            _normal += normal_;
+         }
+         _center += v1;
+         _center += v2;
+diff --git a/src/osg/Drawable.cpp b/src/osg/Drawable.cpp
+index 604cfca..ab6fc3e 100644
+--- a/src/osg/Drawable.cpp
++++ b/src/osg/Drawable.cpp
+@@ -494,9 +494,9 @@ struct ComputeBound : public PrimitiveFunctor
+         virtual void setVertexArray(unsigned int,const Vec4d* vertices) { _vertices4d = vertices; }
+ 
+         template<typename T>
+-        void _drawArrays(T* vert, T* end)
++        void _drawArrays(T* vert, T* end_in)
+         {
+-            for(;vert<end;++vert)
++            for(;vert<end_in;++vert)
+             {
+                 vertex(*vert);
+             }
+@@ -504,9 +504,9 @@ struct ComputeBound : public PrimitiveFunctor
+ 
+ 
+         template<typename T, typename I>
+-        void _drawElements(T* vert, I* indices, I* end)
++        void _drawElements(T* vert, I* indices, I* end_in)
+         {
+-            for(;indices<end;++indices)
++            for(;indices<end_in;++indices)
+             {
+                 vertex(vert[*indices]);
+             }
+diff --git a/src/osg/GraphicsContext.cpp b/src/osg/GraphicsContext.cpp
+index 9d172ec..a67579f 100644
+--- a/src/osg/GraphicsContext.cpp
++++ b/src/osg/GraphicsContext.cpp
+@@ -161,10 +161,10 @@ void GraphicsContext::ScreenIdentifier::readDISPLAY()
+     }
+ }
+ 
+-void GraphicsContext::ScreenIdentifier::setScreenIdentifier(const std::string& displayName)
++void GraphicsContext::ScreenIdentifier::setScreenIdentifier(const std::string& displayName_in)
+ {
+-    std::string::size_type colon = displayName.find_last_of(':');
+-    std::string::size_type point = displayName.find_last_of('.');
++    std::string::size_type colon = displayName_in.find_last_of(':');
++    std::string::size_type point = displayName_in.find_last_of('.');
+ 
+     // handle the case where the host name is supplied with '.' such as 127.0.0.1:0  with only DisplayNum provided
+     // here the point to picks up on the .1 from the host name, rather then demarking the DisplayNum/ScreenNum as
+@@ -179,24 +179,24 @@ void GraphicsContext::ScreenIdentifier::setScreenIdentifier(const std::string& d
+     }
+     else
+     {
+-        hostName = displayName.substr(0,colon);
++        hostName = displayName_in.substr(0,colon);
+     }
+ 
+     std::string::size_type startOfDisplayNum = (colon==std::string::npos) ? 0 : colon+1;
+-    std::string::size_type endOfDisplayNum = (point==std::string::npos) ?  displayName.size() : point;
++    std::string::size_type endOfDisplayNum = (point==std::string::npos) ?  displayName_in.size() : point;
+ 
+     if (startOfDisplayNum<endOfDisplayNum)
+     {
+-        displayNum = atoi(displayName.substr(startOfDisplayNum,endOfDisplayNum-startOfDisplayNum).c_str());
++        displayNum = atoi(displayName_in.substr(startOfDisplayNum,endOfDisplayNum-startOfDisplayNum).c_str());
+     }
+     else
+     {
+         displayNum = -1;
+     }
+ 
+-    if (point!=std::string::npos && point+1<displayName.size())
++    if (point!=std::string::npos && point+1<displayName_in.size())
+     {
+-        screenNum = atoi(displayName.substr(point+1,displayName.size()-point-1).c_str());
++        screenNum = atoi(displayName_in.substr(point+1,displayName_in.size()-point-1).c_str());
+     }
+     else
+     {
+diff --git a/src/osg/Identifier.cpp b/src/osg/Identifier.cpp
+index e0c8d00..a8ce361 100644
+--- a/src/osg/Identifier.cpp
++++ b/src/osg/Identifier.cpp
+@@ -46,9 +46,9 @@ typedef std::map<IdentifierKey, osg::ref_ptr<Identifier> > IdentifierMap;
+ static IdentifierMap  s_IdentifierMap;
+ static OpenThreads::Mutex s_IdentifierMapMutex;
+ 
+-Identifier::Identifier(const std::string& name, int number, osg::Referenced* f, osg::Referenced* s):
+-    _name(name),
+-    _number(number),
++Identifier::Identifier(const std::string& name_in, int number_in, osg::Referenced* f, osg::Referenced* s):
++    _name(name_in),
++    _number(number_in),
+     _first(f),
+     _second(s)
+ {
+diff --git a/src/osg/Image.cpp b/src/osg/Image.cpp
+index 28ab640..eb857f4 100644
+--- a/src/osg/Image.cpp
++++ b/src/osg/Image.cpp
+@@ -306,10 +306,10 @@ void Image::setFileName(const std::string& fileName)
+     _fileName = fileName;
+ }
+ 
+-void Image::setData(unsigned char* data, AllocationMode mode)
++void Image::setData(unsigned char* data_in, AllocationMode mode)
+ {
+     deallocateData();
+-    _data = data;
++    _data = data_in;
+     _allocationMode = mode;
+     dirty();
+ }
+@@ -985,32 +985,32 @@ unsigned int Image::computeImageSizeInBytes(int width,int height, int depth, GLe
+     return osg::maximum( size, computeBlockSize(pixelFormat, packing) );
+ }
+ 
+-int Image::roudUpToMultiple(int s, int pack) {
+-    if (pack < 2) return s;
+-    s += pack - 1;
+-    s -= s % pack;
+-    return s;
++int Image::roudUpToMultiple(int s_in, int pack) {
++    if (pack < 2) return s_in;
++    s_in += pack - 1;
++    s_in -= s_in % pack;
++    return s_in;
+ }
+ 
+-int Image::computeNearestPowerOfTwo(int s,float bias)
++int Image::computeNearestPowerOfTwo(int s_in,float bias)
+ {
+-    if ((s & (s-1))!=0)
++    if ((s_in & (s_in-1))!=0)
+     {
+         // it isn't so lets find the closest power of two.
+         // yes, logf and powf are slow, but this code should
+         // only be called during scene graph initialization,
+         // if at all, so not critical in the greater scheme.
+-        float p2 = logf((float)s)/logf(2.0f);
++        float p2 = logf((float)s_in)/logf(2.0f);
+         float rounded_p2 = floorf(p2+bias);
+-        s = (int)(powf(2.0f,rounded_p2));
++        s_in = (int)(powf(2.0f,rounded_p2));
+     }
+-    return s;
++    return s_in;
+ }
+ 
+-int Image::computeNumberOfMipmapLevels(int s,int t, int r)
++int Image::computeNumberOfMipmapLevels(int s_in,int t_in, int r_in)
+ {
+-    int w = maximum(s, t);
+-    w = maximum(w, r);
++    int w = maximum(s_in, t_in);
++    w = maximum(w, r_in);
+ 
+     int n = 0;
+     while (w >>= 1)
+@@ -1093,21 +1093,21 @@ unsigned int Image::getTotalSizeInBytesIncludingMipmaps() const
+         return getTotalSizeInBytes();
+     }
+ 
+-    int s = _s;
+-    int t = _t;
+-    int r = _r;
++    int s_ = _s;
++    int t_ = _t;
++    int r_ = _r;
+     unsigned int totalSize = 0;
+     for(unsigned int i=0;i<_mipmapData.size()+1;++i)
+     {
+-        totalSize += computeImageSizeInBytes(s, t, r, _pixelFormat, _dataType, _packing);
++        totalSize += computeImageSizeInBytes(s_, t_, r_, _pixelFormat, _dataType, _packing);
+ 
+-        s >>= 1;
+-        t >>= 1;
+-        r >>= 1;
++        s_ >>= 1;
++        t_ >>= 1;
++        r_ >>= 1;
+ 
+-        if (s<1) s=1;
+-        if (t<1) t=1;
+-        if (r<1) r=1;
++        if (s_<1) s_=1;
++        if (t_<1) t_=1;
++        if (r_<1) r_=1;
+    }
+ 
+    return totalSize;
+@@ -1153,7 +1153,7 @@ void Image::setDataType(GLenum dataType)
+ }
+ 
+ 
+-void Image::allocateImage(int s,int t,int r,
++void Image::allocateImage(int s_in,int t_in,int r_in,
+                         GLenum format,GLenum type,
+                         int packing)
+ {
+@@ -1165,7 +1165,7 @@ void Image::allocateImage(int s,int t,int r,
+ 
+     if (_data) previousTotalSize = computeRowWidthInBytes(_s,_pixelFormat,_dataType,_packing)*_t*_r;
+ 
+-    unsigned int newTotalSize = computeRowWidthInBytes(s,format,type,packing)*t*r;
++    unsigned int newTotalSize = computeRowWidthInBytes(s_in,format,type,packing)*t_in*r_in;
+ 
+     if (newTotalSize!=previousTotalSize)
+     {
+@@ -1177,10 +1177,10 @@ void Image::allocateImage(int s,int t,int r,
+ 
+     if (_data)
+     {
+-        callback_needed = (_s != s) || (_t != t) || (_r != r);
+-        _s = s;
+-        _t = t;
+-        _r = r;
++        callback_needed = (_s != s_in) || (_t != t_in) || (_r != r_in);
++        _s = s_in;
++        _t = t_in;
++        _r = r_in;
+         _pixelFormat = format;
+         _dataType = type;
+         _packing = packing;
+@@ -1214,27 +1214,27 @@ void Image::allocateImage(int s,int t,int r,
+     dirty();
+ }
+ 
+-void Image::setImage(int s,int t,int r,
++void Image::setImage(int s_in,int t_in,int r_in,
+                      GLint internalTextureFormat,
+                      GLenum format,GLenum type,
+-                     unsigned char *data,
++                     unsigned char *data_in,
+                      AllocationMode mode,
+                      int packing,
+                      int rowLength)
+ {
+     _mipmapData.clear();
+ 
+-    bool callback_needed = (_s != s) || (_t != t) || (_r != r);
++    bool callback_needed = (_s != s_in) || (_t != t_in) || (_r != r_in);
+ 
+-    _s = s;
+-    _t = t;
+-    _r = r;
++    _s = s_in;
++    _t = t_in;
++    _r = r_in;
+ 
+     _internalTextureFormat = internalTextureFormat;
+     _pixelFormat    = format;
+     _dataType       = type;
+ 
+-    setData(data,mode);
++    setData(data_in,mode);
+ 
+     _packing = packing;
+     _rowLength = rowLength;
+@@ -1385,8 +1385,8 @@ void Image::readImageFromCurrentTexture(unsigned int contextID, bool copyMipMaps
+         }
+ 
+ 
+-        unsigned char* data = new unsigned char[total_size];
+-        if (!data)
++        unsigned char* data_ = new unsigned char[total_size];
++        if (!data_)
+         {
+             OSG_WARN<<"Warning: Image::readImageFromCurrentTexture(..) out of memory, no image read."<<std::endl;
+             return;
+@@ -1403,7 +1403,7 @@ void Image::readImageFromCurrentTexture(unsigned int contextID, bool copyMipMaps
+         glGetIntegerv(GL_UNPACK_ROW_LENGTH, &rowLength);
+         glPixelStorei(GL_PACK_ROW_LENGTH, rowLength);
+ 
+-        _data = data;
++        _data = data_;
+         _s = width;
+         _t = height;
+         _r = depth;
+@@ -1452,8 +1452,8 @@ void Image::readImageFromCurrentTexture(unsigned int contextID, bool copyMipMaps
+         }
+ 
+ 
+-        unsigned char* data = new unsigned char[total_size];
+-        if (!data)
++        unsigned char* data_ = new unsigned char[total_size];
++        if (!data_)
+         {
+             OSG_WARN<<"Warning: Image::readImageFromCurrentTexture(..) out of memory, no image read."<<std::endl;
+             return;
+@@ -1465,7 +1465,7 @@ void Image::readImageFromCurrentTexture(unsigned int contextID, bool copyMipMaps
+         glGetTexLevelParameteriv(textureMode, 0, GL_TEXTURE_HEIGHT, &height);
+         glGetTexLevelParameteriv(textureMode, 0, GL_TEXTURE_DEPTH, &depth);
+ 
+-        _data = data;
++        _data = data_;
+         _s = width;
+         _t = height;
+         _r = depth;
+@@ -1516,9 +1516,9 @@ void Image::swap(osg::Image& rhs)
+ }
+ 
+ 
+-void Image::scaleImage(int s,int t,int r, GLenum newDataType)
++void Image::scaleImage(int s_in,int t_in,int r_in, GLenum newDataType)
+ {
+-    if (_s==s && _t==t && _r==r && _dataType==newDataType) return;
++    if (_s==s_in && _t==t_in && _r==r_in && _dataType==newDataType) return;
+ 
+     if (_data==NULL)
+     {
+@@ -1526,13 +1526,13 @@ void Image::scaleImage(int s,int t,int r, GLenum newDataType)
+         return;
+     }
+ 
+-    if (_r!=1 || r!=1)
++    if (_r!=1 || r_in!=1)
+     {
+         OSG_WARN << "Error Image::scaleImage() do not succeed : scaling of volumes not implemented."<<std::endl;
+         return;
+     }
+ 
+-    unsigned int newTotalSize = computeRowWidthInBytes(s,_pixelFormat,newDataType,_packing)*t;
++    unsigned int newTotalSize = computeRowWidthInBytes(s_in,_pixelFormat,newDataType,_packing)*t_in;
+ 
+     // need to sort out what size to really use...
+     unsigned char* newData = new unsigned char [newTotalSize];
+@@ -1553,8 +1553,8 @@ void Image::scaleImage(int s,int t,int r, GLenum newDataType)
+         _t,
+         _dataType,
+         _data,
+-        s,
+-        t,
++        s_in,
++        t_in,
+         newDataType,
+         newData);
+ 
+@@ -1562,8 +1562,8 @@ void Image::scaleImage(int s,int t,int r, GLenum newDataType)
+     {
+ 
+         // free old image.
+-        _s = s;
+-        _t = t;
++        _s = s_in;
++        _t = t_in;
+         _rowLength = 0;
+         _dataType = newDataType;
+         setData(newData,USE_NEW_DELETE);
+@@ -1680,11 +1680,11 @@ void Image::flipHorizontal()
+         unsigned int rowStepInBytes = getRowStepInBytes();
+         unsigned int imageStepInBytes = getImageStepInBytes();
+ 
+-        for(int r=0;r<_r;++r)
++        for(int r_=0;r_<_r;++r_)
+         {
+-            for (int t=0; t<_t; ++t)
++            for (int t_=0; t_<_t; ++t_)
+             {
+-                unsigned char* rowData = _data + t*rowStepInBytes + r*imageStepInBytes;
++                unsigned char* rowData = _data + t_*rowStepInBytes + r_*imageStepInBytes;
+                 unsigned char* left  = rowData ;
+                 unsigned char* right = rowData + ((_s-1)*getPixelSizeInBits())/8;
+ 
+@@ -1749,11 +1749,11 @@ void Image::flipVertical()
+     {
+         // no mipmaps,
+         // so we can safely handle 3d textures
+-        for(int r=0;r<_r;++r)
++        for(int r_=0;r_<_r;++r_)
+         {
+             if (dxtc)
+             {
+-                if (!dxtc_tool::VerticalFlip(_s,_t,_pixelFormat,data(0,0,r)))
++                if (!dxtc_tool::VerticalFlip(_s,_t,_pixelFormat,data(0,0,r_)))
+                 {
+                     OSG_NOTICE << "Notice Image::flipVertical(): Vertical flip do not succeed" << std::endl;
+                 }
+@@ -1762,7 +1762,7 @@ void Image::flipVertical()
+             {
+                 if (isCompressed()) OSG_NOTICE << "Notice Image::flipVertical(): image is compressed but normal v-flip is used" << std::endl;
+                 // its not a compressed image, so implement flip oursleves.
+-                unsigned char* top = data(0,0,r);
++                unsigned char* top = data(0,0,r_);
+                 unsigned char* bottom = top + (_t-1)*rowStep;
+ 
+                 flipImageVertical(top, bottom, rowSize, rowStep);
+@@ -1788,19 +1788,19 @@ void Image::flipVertical()
+             flipImageVertical(top, bottom, rowSize, rowStep);
+         }
+ 
+-        int s = _s;
+-        int t = _t;
++        int s_ = _s;
++        int t_ = _t;
+         //int r = _r;
+ 
+         for(unsigned int i=0;i<_mipmapData.size() && _mipmapData[i];++i)
+         {
+-            s >>= 1;
+-            t >>= 1;
+-            if (s==0) s=1;
+-            if (t==0) t=1;
++            s_ >>= 1;
++            t_ >>= 1;
++            if (s_==0) s_=1;
++            if (t_==0) t_=1;
+             if (dxtc)
+             {
+-                if (!dxtc_tool::VerticalFlip(s,t,_pixelFormat,_data+_mipmapData[i]))
++                if (!dxtc_tool::VerticalFlip(s_,t_,_pixelFormat,_data+_mipmapData[i]))
+                 {
+                     OSG_NOTICE << "Notice Image::flipVertical(): Vertical flip did not succeed" << std::endl;
+                 }
+@@ -1808,10 +1808,10 @@ void Image::flipVertical()
+             else
+             {
+                 // it's not a compressed image, so implement flip ourselves.
+-                unsigned int mipRowSize = computeRowWidthInBytes(s, _pixelFormat, _dataType, _packing);
++                unsigned int mipRowSize = computeRowWidthInBytes(s_, _pixelFormat, _dataType, _packing);
+                 unsigned int mipRowStep = mipRowSize;
+                 unsigned char* top = _data+_mipmapData[i];
+-                unsigned char* bottom = top + (t-1)*mipRowStep;
++                unsigned char* bottom = top + (t_-1)*mipRowStep;
+ 
+                 flipImageVertical(top, bottom, mipRowSize, mipRowStep);
+             }
+@@ -2151,20 +2151,20 @@ Vec4 _readColor(GLenum pixelFormat, T* data,float scale)
+     return Vec4(1.0f,1.0f,1.0f,1.0f);
+ }
+ 
+-Vec4 Image::getColor(unsigned int s,unsigned t,unsigned r) const
++Vec4 Image::getColor(unsigned int s_in,unsigned t_in,unsigned r_in) const
+ {
+     if (isCompressed())
+     {
+         if (dxtc_tool::isDXTC(_pixelFormat)) {
+             unsigned char color[4];
+-            if (dxtc_tool::CompressedImageGetColor(color, s, t, r, _s, _t, _r, _pixelFormat, _data)) {
++            if (dxtc_tool::CompressedImageGetColor(color, s_in, t_in, r_in, _s, _t, _r, _pixelFormat, _data)) {
+                 return Vec4(((float)color[0]) / 255.0f, ((float)color[1]) / 255.0f, ((float)color[2]) / 255.0f, ((float)color[3]) / 255.0f );
+             }
+         }
+     }
+     else
+     {
+-        const unsigned char* ptr = data(s,t,r);
++        const unsigned char* ptr = data(s_in,t_in,r_in);
+         switch(_dataType)
+         {
+             case(GL_BYTE):              return _readColor(_pixelFormat, (char*)ptr,             1.0f/128.0f);
+@@ -2182,11 +2182,11 @@ Vec4 Image::getColor(unsigned int s,unsigned t,unsigned r) const
+ 
+ Vec4 Image::getColor(const Vec3& texcoord) const
+ {
+-    unsigned int s = osg::clampTo(int(texcoord.x()*float(_s-1)), 0, _s-1);
+-    unsigned int t = osg::clampTo(int(texcoord.y()*float(_t-1)), 0, _t-1);
+-    unsigned int r = osg::clampTo(int(texcoord.z()*float(_r-1)), 0, _r-1);
++    unsigned int s_ = osg::clampTo(int(texcoord.x()*float(_s-1)), 0, _s-1);
++    unsigned int t_ = osg::clampTo(int(texcoord.y()*float(_t-1)), 0, _t-1);
++    unsigned int r_ = osg::clampTo(int(texcoord.z()*float(_r-1)), 0, _r-1);
+     //OSG_NOTICE<<"getColor("<<texcoord<<")="<<getColor(s,t,r)<<std::endl;
+-    return getColor(s,t,r);
++    return getColor(s_,t_,r_);
+ }
+ 
+ 
+@@ -2208,9 +2208,9 @@ void _writeColor(GLenum pixelFormat, T* data, float scale, const Vec4& c)
+ }
+ 
+ 
+-void Image::setColor( const Vec4& color, unsigned int s, unsigned int t/*=0*/, unsigned int r/*=0*/ )
++void Image::setColor( const Vec4& color, unsigned int s_in, unsigned int t_in/*=0*/, unsigned int r_in/*=0*/ )
+ {
+-    unsigned char* ptr = data(s,t,r);
++    unsigned char* ptr = data(s_in,t_in,r_in);
+ 
+     switch(getDataType())
+     {
+@@ -2227,11 +2227,11 @@ void Image::setColor( const Vec4& color, unsigned int s, unsigned int t/*=0*/, u
+ 
+ void Image::setColor( const Vec4& color, const Vec3& texcoord )
+ {
+-    unsigned int s = osg::clampTo(int(texcoord.x()*float(_s-1)), 0, _s-1);
+-    unsigned int t = osg::clampTo(int(texcoord.y()*float(_t-1)), 0, _t-1);
+-    unsigned int r = osg::clampTo(int(texcoord.z()*float(_r-1)), 0, _r-1);
++    unsigned int s_ = osg::clampTo(int(texcoord.x()*float(_s-1)), 0, _s-1);
++    unsigned int t_ = osg::clampTo(int(texcoord.y()*float(_t-1)), 0, _t-1);
++    unsigned int r_ = osg::clampTo(int(texcoord.z()*float(_r-1)), 0, _r-1);
+ 
+-    return setColor(color, s,t,r);
++    return setColor(color, s_,t_,r_);
+ }
+ 
+ void Image::addDimensionsChangedCallback(DimensionsChangedCallback* cb)
+diff --git a/src/osg/ImageSequence.cpp b/src/osg/ImageSequence.cpp
+index 7b49d54..e1cb1f3 100644
+--- a/src/osg/ImageSequence.cpp
++++ b/src/osg/ImageSequence.cpp
+@@ -99,9 +99,9 @@ void ImageSequence::rewind()
+     seek(0.0f);
+ }
+ 
+-void ImageSequence::setMode(Mode mode)
++void ImageSequence::setMode(Mode mode_in)
+ {
+-    _mode = mode;
++    _mode = mode_in;
+ }
+ 
+ void ImageSequence::setLength(double length)
+diff --git a/src/osg/ImageUtils.cpp b/src/osg/ImageUtils.cpp
+index de965b2..4e06e42 100644
+--- a/src/osg/ImageUtils.cpp
++++ b/src/osg/ImageUtils.cpp
+@@ -644,6 +644,17 @@ struct ReplaceAlphaWithLuminanceOperator
+     inline void rgba(float& r,float& g,float& b,float& a) const { float l = (r+g+b)*0.3333333; a = l; }
+ };
+ 
++struct ReplaceAlphaWithLuminanceInvertedOperator
++{
++    ReplaceAlphaWithLuminanceInvertedOperator() {}
++
++    inline void luminance(float&) const {}
++    inline void alpha(float&) const {}
++    inline void luminance_alpha(float& l,float& a) const { a = 1.0-l; }
++    inline void rgb(float&,float&,float&) const { }
++    inline void rgba(float& r,float& g,float& b,float& a) const { float l = (r+g+b)*0.3333333; a = 1.0-l; }
++};
++
+ osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, const osg::Vec4& colour)
+ {
+     GLenum requiredPixelFormat = image->getPixelFormat();
+@@ -652,6 +663,7 @@ osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, cons
+         case (MODULATE_ALPHA_BY_LUMINANCE):
+         case (MODULATE_ALPHA_BY_COLOR):
+         case (REPLACE_ALPHA_WITH_LUMINANCE):
++        case (REPLACE_ALPHA_WITH_LUMINANCE_INVERTED):
+             if (image->getPixelFormat()==GL_RGB || image->getPixelFormat()==GL_BGR) requiredPixelFormat = GL_RGBA;
+             break;
+         case (REPLACE_RGB_WITH_LUMINANCE):
+@@ -691,6 +703,12 @@ osg::Image* colorSpaceConversion(ColorSpaceOperation op, osg::Image* image, cons
+             osg::modifyImage(image, ReplaceAlphaWithLuminanceOperator());
+             return image;
+         }
++        case (REPLACE_ALPHA_WITH_LUMINANCE_INVERTED):
++        {
++            OSG_NOTICE<<"doing conversion REPLACE_ALPHA_WITH_LUMINANCE_INVERTED"<<std::endl;
++            osg::modifyImage(image, ReplaceAlphaWithLuminanceInvertedOperator());
++            return image;
++        }
+         case (REPLACE_RGB_WITH_LUMINANCE):
+         {
+             OSG_NOTICE<<"doing conversion REPLACE_RGB_WITH_LUMINANCE"<<std::endl;
+diff --git a/src/osg/KdTree.cpp b/src/osg/KdTree.cpp
+index 3f7a4a3..bbcb86d 100644
+--- a/src/osg/KdTree.cpp
++++ b/src/osg/KdTree.cpp
+@@ -500,8 +500,8 @@ KdTree::KdTree(const KdTree& rhs, const osg::CopyOp& copyop):
+ 
+ bool KdTree::build(BuildOptions& options, osg::Geometry* geometry)
+ {
+-    BuildKdTree build(*this);
+-    return build.build(options, geometry);
++    BuildKdTree build_(*this);
++    return build_.build(options, geometry);
+ }
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+diff --git a/src/osg/Quat.cpp b/src/osg/Quat.cpp
+index 7c1f3ee..09de031 100644
+--- a/src/osg/Quat.cpp
++++ b/src/osg/Quat.cpp
+@@ -48,25 +48,25 @@ void Quat::get(Matrixd& matrix) const
+ 
+ /// Set the elements of the Quat to represent a rotation of angle
+ /// (radians) around the axis (x,y,z)
+-void Quat::makeRotate( value_type angle, value_type x, value_type y, value_type z )
++void Quat::makeRotate( value_type angle, value_type x_in, value_type y_in, value_type z_in )
+ {
+     const value_type epsilon = 0.0000001;
+ 
+-    value_type length = sqrt( x*x + y*y + z*z );
+-    if (length < epsilon)
++    value_type length_ = sqrt( x_in*x_in + y_in*y_in + z_in*z_in );
++    if (length_ < epsilon)
+     {
+         // ~zero length axis, so reset rotation to zero.
+         *this = Quat();
+         return;
+     }
+ 
+-    value_type inversenorm  = 1.0/length;
++    value_type inversenorm  = 1.0/length_;
+     value_type coshalfangle = cos( 0.5*angle );
+     value_type sinhalfangle = sin( 0.5*angle );
+ 
+-    _v[0] = x * sinhalfangle * inversenorm;
+-    _v[1] = y * sinhalfangle * inversenorm;
+-    _v[2] = z * sinhalfangle * inversenorm;
++    _v[0] = x_in * sinhalfangle * inversenorm;
++    _v[1] = y_in * sinhalfangle * inversenorm;
++    _v[2] = z_in * sinhalfangle * inversenorm;
+     _v[3] = coshalfangle;
+ }
+ 
+@@ -210,10 +210,10 @@ void Quat::makeRotate_original( const Vec3d& from, const Vec3d& to )
+     const value_type epsilon = 0.0000001;
+ 
+     value_type length1  = from.length();
+-    value_type length2  = to.length();
++    value_type length2_  = to.length();
+ 
+     // dot product vec1*vec2
+-    value_type cosangle = from*to/(length1*length2);
++    value_type cosangle = from*to/(length1*length2_);
+ 
+     if ( fabs(cosangle - 1) < epsilon )
+     {
+@@ -260,41 +260,41 @@ void Quat::makeRotate_original( const Vec3d& from, const Vec3d& to )
+ 
+ void Quat::getRotate( value_type& angle, Vec3f& vec ) const
+ {
+-    value_type x,y,z;
+-    getRotate(angle,x,y,z);
+-    vec[0]=x;
+-    vec[1]=y;
+-    vec[2]=z;
++    value_type x_,y_,z_;
++    getRotate(angle,x_,y_,z_);
++    vec[0]=x_;
++    vec[1]=y_;
++    vec[2]=z_;
+ }
+ void Quat::getRotate( value_type& angle, Vec3d& vec ) const
+ {
+-    value_type x,y,z;
+-    getRotate(angle,x,y,z);
+-    vec[0]=x;
+-    vec[1]=y;
+-    vec[2]=z;
++    value_type x_,y_,z_;
++    getRotate(angle,x_,y_,z_);
++    vec[0]=x_;
++    vec[1]=y_;
++    vec[2]=z_;
+ }
+ 
+ 
+ // Get the angle of rotation and axis of this Quat object.
+ // Won't give very meaningful results if the Quat is not associated
+ // with a rotation!
+-void Quat::getRotate( value_type& angle, value_type& x, value_type& y, value_type& z ) const
++void Quat::getRotate( value_type& angle, value_type& x_out, value_type& y_out, value_type& z_out ) const
+ {
+     value_type sinhalfangle = sqrt( _v[0]*_v[0] + _v[1]*_v[1] + _v[2]*_v[2] );
+ 
+     angle = 2.0 * atan2( sinhalfangle, _v[3] );
+     if(sinhalfangle)
+     {
+-        x = _v[0] / sinhalfangle;
+-        y = _v[1] / sinhalfangle;
+-        z = _v[2] / sinhalfangle;
++        x_out = _v[0] / sinhalfangle;
++        y_out = _v[1] / sinhalfangle;
++        z_out = _v[2] / sinhalfangle;
+     }
+     else
+     {
+-        x = 0.0;
+-        y = 0.0;
+-        z = 1.0;
++        x_out = 0.0;
++        y_out = 0.0;
++        z_out = 1.0;
+     }
+ 
+ }
+diff --git a/src/osg/StateSet.cpp b/src/osg/StateSet.cpp
+index d5ef599..dd228e9 100644
+--- a/src/osg/StateSet.cpp
++++ b/src/osg/StateSet.cpp
+@@ -378,7 +378,7 @@ void StateSet::removeParent(osg::Node* node)
+     if (pitr!=_parents.end()) _parents.erase(pitr);
+ }
+ 
+-int StateSet::compare(const StateSet& rhs,bool compareAttributeContents) const
++int StateSet::compare(const StateSet& rhs,bool compareAttributeContents_in) const
+ {
+ 
+     if (_textureAttributeList.size()<rhs._textureAttributeList.size()) return -1;
+@@ -418,7 +418,7 @@ int StateSet::compare(const StateSet& rhs,bool compareAttributeContents) const
+     {
+         const AttributeList& rhs_attributeList = _textureAttributeList[ai];
+         const AttributeList& lhs_attributeList = rhs._textureAttributeList[ai];
+-        if (compareAttributeContents)
++        if (compareAttributeContents_in)
+         {
+             // now check to see how the attributes compare.
+             AttributeList::const_iterator lhs_attr_itr = lhs_attributeList.begin();
+@@ -466,7 +466,7 @@ int StateSet::compare(const StateSet& rhs,bool compareAttributeContents) const
+ 
+ 
+     // now check the rest of the non texture attributes
+-    if (compareAttributeContents)
++    if (compareAttributeContents_in)
+     {
+         // now check to see how the attributes compare.
+         AttributeList::const_iterator lhs_attr_itr = _attributeList.begin();
+diff --git a/src/osg/Texture.cpp b/src/osg/Texture.cpp
+index 7dedf84..c0a9efd 100644
+--- a/src/osg/Texture.cpp
++++ b/src/osg/Texture.cpp
+@@ -667,7 +667,7 @@ void TextureObjectSet::flushDeletedTextureObjects(double /*currentTime*/, double
+     availableTime -= timer.elapsedTime();
+ }
+ 
+-bool TextureObjectSet::makeSpace(unsigned int& size)
++bool TextureObjectSet::makeSpace(unsigned int& size_out)
+ {
+     {
+         OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_mutex);
+@@ -681,13 +681,13 @@ bool TextureObjectSet::makeSpace(unsigned int& size)
+     if (!_orphanedTextureObjects.empty())
+     {
+         unsigned int sizeAvailable = _orphanedTextureObjects.size() * _profile._size;
+-        if (size>sizeAvailable) size -= sizeAvailable;
+-        else size = 0;
++        if (size_out>sizeAvailable) size_out -= sizeAvailable;
++        else size_out = 0;
+ 
+         flushAllDeletedTextureObjects();
+     }
+ 
+-    return size==0;
++    return size_out==0;
+ }
+ 
+ osg::ref_ptr<Texture::TextureObject> TextureObjectSet::takeFromOrphans(Texture* texture)
+diff --git a/src/osg/TransferFunction.cpp b/src/osg/TransferFunction.cpp
+index 56c5a32..e5c0fd1 100644
+--- a/src/osg/TransferFunction.cpp
++++ b/src/osg/TransferFunction.cpp
+@@ -112,9 +112,9 @@ void TransferFunction1D::assignToImage(float lower_v, const osg::Vec4& lower_c,
+ }
+ 
+ 
+-void TransferFunction1D::setColor(float v, const osg::Vec4& color, bool updateImage)
++void TransferFunction1D::setColor(float v, const osg::Vec4& color, bool updateImage_in)
+ {
+-    if (!updateImage)
++    if (!updateImage_in)
+     {
+         _colorMap[v] = color;
+         return;
+diff --git a/src/osgDB/FieldReaderIterator.cpp b/src/osgDB/FieldReaderIterator.cpp
+index 5622501..105912d 100644
+--- a/src/osgDB/FieldReaderIterator.cpp
++++ b/src/osgDB/FieldReaderIterator.cpp
+@@ -130,9 +130,9 @@ bool FieldReaderIterator::eof() const
+ }
+ 
+ 
+-void FieldReaderIterator::insert(int pos,Field* field)
++void FieldReaderIterator::insert(int pos,Field* field_in)
+ {
+-    if (field==NULL) return;
++    if (field_in==NULL) return;
+ 
+     if (pos<0) pos=0;
+     if (pos>_fieldQueueSize) pos=_fieldQueueSize;
+@@ -165,7 +165,7 @@ void FieldReaderIterator::insert(int pos,Field* field)
+     {
+         _fieldQueue[i+1]=_fieldQueue[i];
+     }
+-    _fieldQueue[pos] = field;
++    _fieldQueue[pos] = field_in;
+     ++_fieldQueueSize;
+ }
+ 
+@@ -174,13 +174,13 @@ void FieldReaderIterator::insert(int pos,const char* str)
+ {
+     if (str)
+     {
+-        Field* field = new Field;
++        Field* field_ = new Field;
+         while(*str!=0)
+         {
+-            field->addChar(*str);
++            field_->addChar(*str);
+             ++str;
+         }
+-        insert(pos,field);
++        insert(pos,field_);
+     }
+ }
+ 
+diff --git a/src/osgGA/CameraManipulator.cpp b/src/osgGA/CameraManipulator.cpp
+index 30e3feb..307f5ae 100644
+--- a/src/osgGA/CameraManipulator.cpp
++++ b/src/osgGA/CameraManipulator.cpp
+@@ -41,12 +41,12 @@ CameraManipulator::~CameraManipulator()
+ 
+ std::string CameraManipulator::getManipulatorName() const
+ {
+-    const char* className = this->className();
+-    const char* manipString = strstr(className, "Manipulator");
++    const char* className_ = this->className();
++    const char* manipString = strstr(className_, "Manipulator");
+     if (!manipString)
+-        return std::string(className);
++        return std::string(className_);
+     else
+-        return std::string(className, manipString-className);
++        return std::string(className_, manipString-className_);
+ }
+ 
+ 
+diff --git a/src/osgGA/EventHandler.cpp b/src/osgGA/EventHandler.cpp
+index 84117cd..189a7bd 100644
+--- a/src/osgGA/EventHandler.cpp
++++ b/src/osgGA/EventHandler.cpp
+@@ -45,8 +45,8 @@ void EventHandler::event(osg::NodeVisitor* nv, osg::Drawable* drawable)
+     }
+ }
+ 
+-bool EventHandler::handle(osgGA::Event* event, osg::Object* /*object*/, osg::NodeVisitor* /*nv*/)
++bool EventHandler::handle(osgGA::Event* event_in, osg::Object* /*object*/, osg::NodeVisitor* /*nv*/)
+ {
+-    OSG_NOTICE<<"Handle event "<<event<<std::endl;
++    OSG_NOTICE<<"Handle event "<<event_in<<std::endl;
+     return false;
+ }
+diff --git a/src/osgGA/GUIEventHandler.cpp b/src/osgGA/GUIEventHandler.cpp
+index a466727..61bc066 100644
+--- a/src/osgGA/GUIEventHandler.cpp
++++ b/src/osgGA/GUIEventHandler.cpp
+@@ -24,10 +24,10 @@ GUIEventHandler::~GUIEventHandler()
+ 
+ 
+ // adapt EventHandler usage to old style GUIEventHandler usage
+-bool GUIEventHandler::handle(osgGA::Event* event, osg::Object* object, osg::NodeVisitor* nv)
++bool GUIEventHandler::handle(osgGA::Event* event_in, osg::Object* object, osg::NodeVisitor* nv)
+ {
+     osgGA::EventVisitor* ev = nv->asEventVisitor();
+-    osgGA::GUIEventAdapter* ea = event->asGUIEventAdapter();
++    osgGA::GUIEventAdapter* ea = event_in->asGUIEventAdapter();
+     if (ea && ev && ev->getActionAdapter())
+     {
+ #if 1
+diff --git a/src/osgPlugins/OpenFlight/DataOutputStream.cpp b/src/osgPlugins/OpenFlight/DataOutputStream.cpp
+index 6c33c54..5ab2022 100644
+--- a/src/osgPlugins/OpenFlight/DataOutputStream.cpp
++++ b/src/osgPlugins/OpenFlight/DataOutputStream.cpp
+@@ -113,17 +113,17 @@ DataOutputStream::writeString( const std::string& val, bool nullTerminate )
+ }
+ 
+ void
+-DataOutputStream::writeString( const std::string& val, int size, char fill )
++DataOutputStream::writeString( const std::string& val, int size, char fill_in )
+ {
+     if (val.size() > ((unsigned int)size)-1)
+     {
+         vwrite( const_cast<char*>( val.c_str() ), size-1 );
+-        vwrite( &fill, 1 );
++        vwrite( &fill_in, 1 );
+     }
+     else
+     {
+         vwrite( const_cast<char*>( val.c_str() ), val.size() );
+-        writeFill( size - val.size(), fill );
++        writeFill( size - val.size(), fill_in );
+     }
+ }
+ 
+diff --git a/src/osgPlugins/OpenFlight/Document.cpp b/src/osgPlugins/OpenFlight/Document.cpp
+index 00ab37c..eaa1fd8 100644
+--- a/src/osgPlugins/OpenFlight/Document.cpp
++++ b/src/osgPlugins/OpenFlight/Document.cpp
+@@ -114,18 +114,18 @@ osg::Node* Document::getInstanceDefinition(int no)
+     return NULL;
+ }
+ 
+-void Document::setSubSurfacePolygonOffset(int level, osg::PolygonOffset* po)
++void Document::setSubSurfacePolygonOffset(int level_in, osg::PolygonOffset* po)
+ {
+-    _subsurfacePolygonOffsets[level] = po;
++    _subsurfacePolygonOffsets[level_in] = po;
+ }
+ 
+-osg::PolygonOffset* Document::getSubSurfacePolygonOffset(int level)
++osg::PolygonOffset* Document::getSubSurfacePolygonOffset(int level_in)
+ {
+-    OSG_DEBUG<<"Document::getSubSurfacePolygonOffset("<<level<<")"<<std::endl;
+-    osg::ref_ptr<osg::PolygonOffset>& po = _subsurfacePolygonOffsets[level];
++    OSG_DEBUG<<"Document::getSubSurfacePolygonOffset("<<level_in<<")"<<std::endl;
++    osg::ref_ptr<osg::PolygonOffset>& po = _subsurfacePolygonOffsets[level_in];
+     if (!po)
+     {
+-        po = new osg::PolygonOffset(-1.0f*float(level), -1.0f);
++        po = new osg::PolygonOffset(-1.0f*float(level_in), -1.0f);
+     }
+     return po.get();
+ }
+diff --git a/src/osgPlugins/OpenFlight/FltWriteResult.h b/src/osgPlugins/OpenFlight/FltWriteResult.h
+index 4ab3a44..4444eb1 100644
+--- a/src/osgPlugins/OpenFlight/FltWriteResult.h
++++ b/src/osgPlugins/OpenFlight/FltWriteResult.h
+@@ -40,8 +40,8 @@ namespace flt
+ class FltWriteResult : public osgDB::ReaderWriter::WriteResult
+ {
+ public:
+-    FltWriteResult( WriteResult::WriteStatus status=WriteResult::FILE_SAVED )
+-      : WriteResult( status )
++    FltWriteResult( WriteResult::WriteStatus status_in=WriteResult::FILE_SAVED )
++      : WriteResult( status_in )
+         {}
+ 
+     void setNumErrors( int n );
+diff --git a/src/osgPlugins/OpenFlight/Pools.h b/src/osgPlugins/OpenFlight/Pools.h
+index 7d1058e..976efbf 100644
+--- a/src/osgPlugins/OpenFlight/Pools.h
++++ b/src/osgPlugins/OpenFlight/Pools.h
+@@ -37,8 +37,8 @@ class VertexPool : public osg::Referenced, public std::istringstream
+ {
+ public:
+ 
+-    explicit VertexPool( const std::string& str) :
+-        std::istringstream(str,std::istringstream::in|std::istringstream::binary) {}
++    explicit VertexPool( const std::string& str_in) :
++        std::istringstream(str_in,std::istringstream::in|std::istringstream::binary) {}
+ 
+ protected:
+ 
+@@ -50,8 +50,8 @@ class ColorPool : public osg::Referenced , public std::vector<osg::Vec4>
+ {
+ public:
+ 
+-    explicit ColorPool(bool old,int size) :
+-        std::vector<osg::Vec4>(size),
++    explicit ColorPool(bool old,int size_in) :
++        std::vector<osg::Vec4>(size_in),
+         _old(old) {}
+ 
+     osg::Vec4 getColor(int indexIntensity) const;
+diff --git a/src/osgPlugins/OpenFlight/Vertex.h b/src/osgPlugins/OpenFlight/Vertex.h
+index 280ada4..92cbe12 100644
+--- a/src/osgPlugins/OpenFlight/Vertex.h
++++ b/src/osgPlugins/OpenFlight/Vertex.h
+@@ -63,8 +63,8 @@ public:
+ 
+     VertexList() {}
+ 
+-    explicit VertexList(int size) :
+-        std::vector<Vertex>(size) {}
++    explicit VertexList(int size_in) :
++        std::vector<Vertex>(size_in) {}
+ 
+ protected:
+ 
+diff --git a/src/osgPlugins/OpenFlight/expAncillaryRecords.cpp b/src/osgPlugins/OpenFlight/expAncillaryRecords.cpp
+index 9f1902a..9bf5baf 100644
+--- a/src/osgPlugins/OpenFlight/expAncillaryRecords.cpp
++++ b/src/osgPlugins/OpenFlight/expAncillaryRecords.cpp
+@@ -76,9 +76,9 @@ FltExportVisitor::writeLongID( const std::string& id, DataOutputStream* dos )
+ }
+ 
+ void
+-FltExportVisitor::writeMatrix( const osg::Referenced* ref )
++FltExportVisitor::writeMatrix( const osg::Referenced* ref_in )
+ {
+-    const osg::RefMatrix* rm = dynamic_cast<const osg::RefMatrix*>( ref );
++    const osg::RefMatrix* rm = dynamic_cast<const osg::RefMatrix*>( ref_in );
+     if (!rm)
+         return;
+ 
+diff --git a/src/osgPlugins/cfg/RenderSurface.h b/src/osgPlugins/cfg/RenderSurface.h
+index a6df65d..2890ee1 100644
+--- a/src/osgPlugins/cfg/RenderSurface.h
++++ b/src/osgPlugins/cfg/RenderSurface.h
+@@ -64,8 +64,8 @@ class RenderSurface : public osg::Referenced
+         {
+             public:
+                 InputRectangle(): _left(-1.0), _bottom(-1.0), _width(2.0), _height(2.0) {}
+-                InputRectangle( float left, float right, float bottom, float top ):
+-                    _left(left), _bottom(bottom), _width(right-left), _height(top-bottom) {}
++                InputRectangle( float left_in, float right, float bottom_in, float top ):
++                    _left(left_in), _bottom(bottom_in), _width(right-left_in), _height(top-bottom_in) {}
+                 InputRectangle(const InputRectangle &ir)
+                 {
+                      _left = ir._left;
+@@ -75,12 +75,12 @@ class RenderSurface : public osg::Referenced
+                 }
+                 virtual ~InputRectangle() {}
+ 
+-                void set( float left, float right, float bottom, float top )
++                void set( float left_in, float right, float bottom_in, float top )
+                 {
+-                    _left = left;
+-                    _bottom = bottom;
+-                    _width = right - left;
+-                    _height = top - bottom;
++                    _left = left_in;
++                    _bottom = bottom_in;
++                    _width = right - left_in;
++                    _height = top - bottom_in;
+                 }
+                 float left() const { return _left; }
+                 float bottom() const { return _bottom; }
+diff --git a/src/osgPlugins/cfg/VisualChooser.h b/src/osgPlugins/cfg/VisualChooser.h
+index b3a42ce..4ae194b 100644
+--- a/src/osgPlugins/cfg/VisualChooser.h
++++ b/src/osgPlugins/cfg/VisualChooser.h
+@@ -70,17 +70,17 @@ class VisualChooser : public osg::Referenced
+         //-------------------------------------------------------------------------
+         // Generic method for adding an attribute with a parameter
+         // (e.g DepthSize, 1 )
+-        void addAttribute( AttributeName attribute, int parameter );
++        void addAttribute( AttributeName attribute_in, int parameter_in );
+ 
+         //-------------------------------------------------------------------------
+         // Generic method for adding an attribute without a parameter
+         // (e.g DoubleBuffer )
+-        void addExtendedAttribute( unsigned int attribute );
++        void addExtendedAttribute( unsigned int attribute_in );
+ 
+         //-------------------------------------------------------------------------
+         // Generic method for adding an extended attribute with a parameter
+         // (e.g DepthSize, 1 )
+-        void addExtendedAttribute( unsigned int attribute, int parameter );
++        void addExtendedAttribute( unsigned int attribute_in, int parameter_in );
+ 
+         //-------------------------------------------------------------------------
+         // The following method returns whether double buffering is being used
+@@ -164,26 +164,26 @@ class VisualChooser : public osg::Referenced
+                 int  _parameter;
+                 bool _is_extension;
+ 
+-                VisualAttribute( AttributeName attribute, int parameter ) :
+-                _attribute(attribute),
++                VisualAttribute( AttributeName attribute_in, int parameter_in ) :
++                _attribute(attribute_in),
+                 _has_parameter(true),
+-                _parameter(parameter),
++                _parameter(parameter_in),
+                 _is_extension(false) {}
+ 
+-                VisualAttribute( AttributeName attribute ) :
+-                _attribute(attribute),
++                VisualAttribute( AttributeName attribute_in ) :
++                _attribute(attribute_in),
+                 _has_parameter(false),
+                 _parameter(0),
+                 _is_extension(false) {}
+ 
+-                VisualAttribute( unsigned int attribute, int parameter ) :
+-                _attribute(attribute),
++                VisualAttribute( unsigned int attribute_in, int parameter_in ) :
++                _attribute(attribute_in),
+                 _has_parameter(true),
+-                _parameter(parameter),
++                _parameter(parameter_in),
+                 _is_extension(true) {}
+ 
+-                VisualAttribute( unsigned int attribute ) :
+-                _attribute(attribute),
++                VisualAttribute( unsigned int attribute_in ) :
++                _attribute(attribute_in),
+                 _has_parameter(false),
+                 _parameter(0),
+                 _is_extension(true) {}
+diff --git a/src/osgPlugins/ive/BlinkSequence.cpp b/src/osgPlugins/ive/BlinkSequence.cpp
+index 0e74190..3f89d45 100644
+--- a/src/osgPlugins/ive/BlinkSequence.cpp
++++ b/src/osgPlugins/ive/BlinkSequence.cpp
+@@ -35,10 +35,10 @@ void BlinkSequence::write(DataOutputStream* out){
+     out->writeInt(size);
+     for(unsigned int i=0; i<size; i++){
+         double length;
+-        osg::Vec4 color;
+-        getPulse(i, length, color);
++        osg::Vec4 color_;
++        getPulse(i, length, color_);
+         out->writeDouble(length);
+-        out->writeVec4(color);
++        out->writeVec4(color_);
+     }
+     // Write out phase shift.
+     out->writeDouble(getPhaseShift());
+@@ -69,8 +69,8 @@ void BlinkSequence::read(DataInputStream* in){
+         unsigned int size = in->readInt();
+         for(unsigned int i=0; i<size; i++){
+             double length = in->readDouble();
+-            osg::Vec4 color = in->readVec4();
+-            addPulse(length,color);
++            osg::Vec4 color_ = in->readVec4();
++            addPulse(length,color_);
+         }
+         // Read in phase shift.
+         setPhaseShift(in->readDouble());
+diff --git a/src/osgPlugins/ive/DrawArrayLengths.cpp b/src/osgPlugins/ive/DrawArrayLengths.cpp
+index 51235f8..b94c05a 100644
+--- a/src/osgPlugins/ive/DrawArrayLengths.cpp
++++ b/src/osgPlugins/ive/DrawArrayLengths.cpp
+@@ -58,8 +58,8 @@ void DrawArrayLengths::read(DataInputStream* in){
+         setFirst(in->readInt());
+ 
+         // Read array length and its elements.
+-        int size = in->readInt();
+-        for(int i=0; i<size; i++){
++        int size_ = in->readInt();
++        for(int i=0; i<size_; i++){
+             push_back(in->readInt());
+         }
+ 
+diff --git a/src/osgPlugins/ive/DrawElementsUByte.cpp b/src/osgPlugins/ive/DrawElementsUByte.cpp
+index ea19e3e..25ef505 100644
+--- a/src/osgPlugins/ive/DrawElementsUByte.cpp
++++ b/src/osgPlugins/ive/DrawElementsUByte.cpp
+@@ -51,9 +51,9 @@ void DrawElementsUByte::read(DataInputStream* in){
+             in_THROW_EXCEPTION("DrawElementsUByte::read(): Could not cast this osg::DrawElementsUByte to an osg::PrimitiveSet.");
+ 
+         // Read array length and its elements.
+-        int size = in->readInt();
+-        resize(size);
+-        if (size!=0) in->readCharArray((char*)&front(), size * CHARSIZE);
++        int size_ = in->readInt();
++        resize(size_);
++        if (size_!=0) in->readCharArray((char*)&front(), size_ * CHARSIZE);
+ 
+     }
+     else{
+diff --git a/src/osgPlugins/ive/DrawElementsUInt.cpp b/src/osgPlugins/ive/DrawElementsUInt.cpp
+index 495480d..b3f6830 100644
+--- a/src/osgPlugins/ive/DrawElementsUInt.cpp
++++ b/src/osgPlugins/ive/DrawElementsUInt.cpp
+@@ -53,13 +53,13 @@ void DrawElementsUInt::read(DataInputStream* in)
+             in_THROW_EXCEPTION("DrawElementsUInt::read(): Could not cast this osg::DrawElementsUInt to an osg::PrimitiveSet.");
+ 
+         // Read array length and its elements.
+-        int size = in->readInt();
+-        resize(size);
+-        if (size!=0) in->readCharArray((char*)&front(), size * INTSIZE);
++        int size_ = in->readInt();
++        resize(size_);
++        if (size_!=0) in->readCharArray((char*)&front(), size_ * INTSIZE);
+ 
+         if (in->_byteswap)
+         {
+-           for (int i = 0 ; i < size ; i++ )
++           for (int i = 0 ; i < size_ ; i++ )
+            {
+                 osg::swapBytes4((char*)&((*this)[i])) ;
+            }
+diff --git a/src/osgPlugins/ive/DrawElementsUShort.cpp b/src/osgPlugins/ive/DrawElementsUShort.cpp
+index 35e6080..4371298 100644
+--- a/src/osgPlugins/ive/DrawElementsUShort.cpp
++++ b/src/osgPlugins/ive/DrawElementsUShort.cpp
+@@ -52,13 +52,13 @@ void DrawElementsUShort::read(DataInputStream* in){
+             in_THROW_EXCEPTION("DrawElementsUShort::read(): Could not cast this osg::DrawElementsUShort to an osg::PrimitiveSet.");
+ 
+         // Read array length and its elements.
+-        int size = in->readInt();
+-        resize(size);
+-        in->readCharArray((char*)&front(), size * SHORTSIZE);
++        int size_ = in->readInt();
++        resize(size_);
++        in->readCharArray((char*)&front(), size_ * SHORTSIZE);
+ 
+         if (in->_byteswap)
+         {
+-           for (int i = 0 ; i < size ; i++ )
++           for (int i = 0 ; i < size_ ; i++ )
+            {
+               osg::swapBytes((char *)&((*this)[i]),SHORTSIZE) ;
+            }
+diff --git a/src/osgPlugins/ive/Image.cpp b/src/osgPlugins/ive/Image.cpp
+index f7a8969..a8703c3 100644
+--- a/src/osgPlugins/ive/Image.cpp
++++ b/src/osgPlugins/ive/Image.cpp
+@@ -146,12 +146,12 @@ void Image::read(DataInputStream* in)
+ 
+ 
+             //char* data = (char*)malloc (dataSize);
+-            char* data =  new char[dataSize];
+-            if(!data)
+-                in_THROW_EXCEPTION("Image::read(): Unable to allocate memory for image data.");
+-            in->readCharArray(data,dataSize);
++            char* data_ =  new char[dataSize];
++            if(!data_)
++                in_THROW_EXCEPTION("Image::read(): Unable to allocate memory for image data_.");
++            in->readCharArray(data_,dataSize);
+             setImage(is, it, ir, internalTextureFormat, pixelFormat,
+-                dataType, (unsigned char* ) data, osg::Image::USE_NEW_DELETE, packing);
++                dataType, (unsigned char* ) data_, osg::Image::USE_NEW_DELETE, packing);
+         }
+ 
+         _mipmapData.swap(mipmapData);
+diff --git a/src/osgPlugins/las/ReaderWriterLAS.cpp b/src/osgPlugins/las/ReaderWriterLAS.cpp
+index f5ab0e3..d54806f 100644
+--- a/src/osgPlugins/las/ReaderWriterLAS.cpp
++++ b/src/osgPlugins/las/ReaderWriterLAS.cpp
+@@ -28,6 +28,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+             supportsExtension("las", "LAS point cloud format");
+             supportsExtension("laz", "compressed LAS point cloud format");
+             supportsOption("v", "Verbose output");
++            supportsOption("d", "Debug output");
+             supportsOption("noScale", "don't scale vertices according to las haeder - put schale in matixTransform");
+             supportsOption("noReCenter", "don't transform vertex coords to re-center the pointcloud");
+         }
+@@ -54,6 +55,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+         virtual ReadResult readNode(std::istream& ifs, const Options* options) const {
+             // Reading options
+             bool _verbose = false;
++            bool _debug = false;
+             bool _scale = true;
+             bool _recenter = true;
+             if (options)
+@@ -66,6 +68,10 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+                     {
+                         _verbose = true;
+                     }
++                    if (opt == "d")
++                    {
++                        _debug = true;
++                    }
+                     if (opt == "noScale")
+                     {
+                         _scale = false;
+@@ -127,10 +133,21 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+ 
+                 // Extract color components from LAS point
+                 liblas::Color c = p.GetColor();
++                /*
+                 uint32_t r = c.GetRed() >> 8;
+                 uint32_t g = c.GetGreen() >> 8;
+                 uint32_t b = c.GetBlue() >> 8;
+-                uint32_t a = 255;    // default value, since LAS point has no alpha information
++                
++                */
++                /*
++                float r = c.GetRed()/255.0;
++                float g = c.GetGreen()/255.0;
++                float b = c.GetBlue()/255.0;
++                float a = 1.0;*/    // default value, since LAS point has no alpha information
++                uint32_t r = c.GetRed();
++                uint32_t g = c.GetGreen();
++                uint32_t b = c.GetBlue();
++                uint32_t a = 255;
+ 
+                 if (vertices->size() == 0)
+                 {
+@@ -141,7 +158,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+                 {
+                     if (singleColor)
+                     {
+-                        singleColor = singleColorValue == c;//set false if different color found
++                        singleColor = (singleColorValue == c);//set false if different color found
+                     }
+                 }
+                 if (vertices->size() >= targetNumVertices)
+@@ -196,7 +213,12 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+                 colours->push_back(osg::Vec4ub(r, g, b, a));
+ 
+                 // Warning: Printing zillion of points may take looong time
+-                //std::cout << i << ". " << p << '\n';
++                if (_debug)
++                {
++                    std::cout << i << ". " << p << '\n';
++                    std::cout << "Color: " << r << "," << g << "," << b << '\n';
++                    std::cout << "SingleColor: " << singleColor << '\n';
++                }
+                 i++;
+             }
+             // calculate the mid point of the point cloud
+@@ -229,7 +251,7 @@ class ReaderWriterLAS : public osgDB::ReaderWriter
+                     << std::endl << std::endl;
+             }
+ 
+-            geometry->setUseDisplayList(true);
++            geometry->setUseDisplayList(false);
+             geometry->setUseVertexBufferObjects(true);
+             geometry->setVertexArray(vertices);
+             if (singleColor)
+diff --git a/src/osgPlugins/txp/TXPArchive.cpp b/src/osgPlugins/txp/TXPArchive.cpp
+index 2ad5c3b..b2cad88 100644
+--- a/src/osgPlugins/txp/TXPArchive.cpp
++++ b/src/osgPlugins/txp/TXPArchive.cpp
+@@ -41,9 +41,9 @@ using namespace txp;
+ #define TXPArchiveERROR(s) OSG_NOTICE << "txp::TXPArchive::" << (s) << " error: "
+ 
+ 
+-void TXPArchive::SetTexMap(int key,osg::ref_ptr<osg::Texture2D> ref)
++void TXPArchive::SetTexMap(int key,osg::ref_ptr<osg::Texture2D> ref_in)
+ {
+-    _texmap[key] = ref;
++    _texmap[key] = ref_in;
+ }
+ 
+ osg::ref_ptr<osg::Texture2D> TXPArchive::GetTexMapEntry(int key)
+@@ -51,9 +51,9 @@ osg::ref_ptr<osg::Texture2D> TXPArchive::GetTexMapEntry(int key)
+     return _texmap[key];
+ }
+ 
+-void TXPArchive::SetStatesMap(int key,osg::ref_ptr<osg::StateSet> ref)
++void TXPArchive::SetStatesMap(int key,osg::ref_ptr<osg::StateSet> ref_in)
+ {
+-    _statesMap[key] = ref;
++    _statesMap[key] = ref_in;
+ }
+ 
+ osg::ref_ptr<osg::StateSet> TXPArchive::GetStatesMapEntry(int key)
+@@ -211,10 +211,10 @@ bool TXPArchive::loadMaterial(int ix)
+         mat->GetAlphaFunc(alphaFunc);
+         if( alphaFunc>=GL_NEVER && alphaFunc<=GL_ALWAYS)
+         {
+-            float64 ref;
+-            mat->GetAlphaRef(ref);
++            float64 ref_;
++            mat->GetAlphaRef(ref_);
+             osg::AlphaFunc *osg_alpha_func = new osg::AlphaFunc;
+-            osg_alpha_func->setFunction((osg::AlphaFunc::ComparisonFunction)alphaFunc,(float)ref);
++            osg_alpha_func->setFunction((osg::AlphaFunc::ComparisonFunction)alphaFunc,(float)ref_);
+             osg_state_set->setAttributeAndModes(osg_alpha_func, osg::StateAttribute::ON);
+         }
+ 
+@@ -486,7 +486,7 @@ bool TXPArchive::loadLightAttributes()
+     trpgLightTable::LightMapType::iterator itr = lm->begin();
+     for ( ; itr != lm->end() ; itr++)
+     {
+-        trpgLightAttr* ref = &itr->second;
++        trpgLightAttr* ref_ = &itr->second;
+ 
+         osgSim::LightPointNode* osgLight = new osgSim::LightPointNode();
+ 
+@@ -496,15 +496,15 @@ bool TXPArchive::loadLightAttributes()
+         lp._on = true;
+ 
+         trpgColor col;
+-        ref->GetFrontColor(col);
++        ref_->GetFrontColor(col);
+         lp._color = osg::Vec4(col.red, col.green,col.blue, 1.0);
+ 
+         float64 inten;
+-        ref->GetFrontIntensity(inten);
++        ref_->GetFrontIntensity(inten);
+         lp._intensity = inten;
+ 
+         trpgLightAttr::PerformerAttr perfAttr;
+-        ref->GetPerformerAttr(perfAttr);
++        ref_->GetPerformerAttr(perfAttr);
+ 
+         // point part
+         //osgPoint->setSize(perfAttr.actualSize);
+@@ -530,22 +530,22 @@ bool TXPArchive::loadLightAttributes()
+ //        osgLight->setMaxVisibleDistance2(clamp);
+ 
+         trpg3dPoint normal;
+-        ref->GetNormal(normal);
++        ref_->GetNormal(normal);
+ 
+ //        lp._radius = clamp;
+ 
+         trpgLightAttr::LightDirectionality direc;
+-        ref->GetDirectionality(direc);
++        ref_->GetDirectionality(direc);
+         if( direc == trpgLightAttr::trpg_Unidirectional)
+         {
+             osgSim::AzimElevationSector*  sec = new osgSim::AzimElevationSector();
+             float64 tmp;
+-            ref->GetHLobeAngle(tmp);
++            ref_->GetHLobeAngle(tmp);
+             float64 tmpfade;
+-            ref->GetLobeFalloff(tmpfade);
++            ref_->GetLobeFalloff(tmpfade);
+             sec->setAzimuthRange(-tmp/2.0,tmp/2.0,tmpfade);
+ 
+-            ref->GetVLobeAngle(tmp);
++            ref_->GetVLobeAngle(tmp);
+             sec->setElevationRange(0,tmp, tmpfade);
+ 
+             lp._sector = sec;
+@@ -555,12 +555,12 @@ bool TXPArchive::loadLightAttributes()
+         {
+             osgSim::AzimElevationSector*  front = new osgSim::AzimElevationSector();
+             float64 tmp;
+-            ref->GetHLobeAngle(tmp);
++            ref_->GetHLobeAngle(tmp);
+             float64 tmpfade;
+-            ref->GetLobeFalloff(tmpfade);
++            ref_->GetLobeFalloff(tmpfade);
+             front->setAzimuthRange(-tmp/2.0,tmp/2.0,tmpfade);
+ 
+-            ref->GetVLobeAngle(tmp);
++            ref_->GetVLobeAngle(tmp);
+             front->setElevationRange(0,tmp, tmpfade);
+ 
+             lp._sector = front;
+@@ -786,8 +786,8 @@ public:
+         const trpgHeader* header = _archive->GetHeader();
+         trpgHeader::trpgTileType tileType;
+         header->GetTileOriginType(tileType);
+-        const osg::Referenced* ref = xform.getUserData();
+-        const TileIdentifier* tileID = dynamic_cast<const txp::TileIdentifier*>(ref);
++        const osg::Referenced* ref_ = xform.getUserData();
++        const TileIdentifier* tileID = dynamic_cast<const txp::TileIdentifier*>(ref_);
+ 
+         if(!tileID) return; // bail early - this isn't a loaded model
+ 
+diff --git a/src/osgPlugins/txp/TXPParser.cpp b/src/osgPlugins/txp/TXPParser.cpp
+index a7e8e48..05438a0 100644
+--- a/src/osgPlugins/txp/TXPParser.cpp
++++ b/src/osgPlugins/txp/TXPParser.cpp
+@@ -531,10 +531,10 @@ void TXPParser::loadLocalMaterials()
+             mat->GetAlphaFunc(alphaFunc);
+             if( alphaFunc>=GL_NEVER && alphaFunc<=GL_ALWAYS)
+             {
+-                float64 ref;
+-                mat->GetAlphaRef(ref);
++                float64 ref_;
++                mat->GetAlphaRef(ref_);
+                 osg::AlphaFunc *osg_alpha_func = new osg::AlphaFunc;
+-                osg_alpha_func->setFunction((osg::AlphaFunc::ComparisonFunction)alphaFunc,(float)ref);
++                osg_alpha_func->setFunction((osg::AlphaFunc::ComparisonFunction)alphaFunc,(float)ref_);
+                 osg_state_set->setAttributeAndModes(osg_alpha_func, osg::StateAttribute::ON);
+             }
+ 
+@@ -787,8 +787,8 @@ void* lightRead::Parse(trpgToken /*tok*/,trpgReadBuffer &buf)
+     light.GetNumVertices(nvert);
+ 
+     const trpgLightTable *lt = _parse->getArchive()->GetLightTable();
+-    trpgLightAttr *ref = const_cast<trpgLightAttr*>(lt->GetLightAttrRef(attr_index));
+-    if (!ref)
++    trpgLightAttr *ref_ = const_cast<trpgLightAttr*>(lt->GetLightAttrRef(attr_index));
++    if (!ref_)
+     {
+         OSG_NOTICE << "NULL LightAttr " << attr_index << std::endl;
+         return (void*)1;
+@@ -797,22 +797,22 @@ void* lightRead::Parse(trpgToken /*tok*/,trpgReadBuffer &buf)
+     osgSim::LightPointNode *lpNode = new osgSim::LightPointNode();
+ 
+     trpgColor col;
+-    ref->GetFrontColor(col);
++    ref_->GetFrontColor(col);
+ 
+     float64 inten;
+-    ref->GetFrontIntensity(inten);
++    ref_->GetFrontIntensity(inten);
+ 
+     trpgLightAttr::PerformerAttr perfAttr;
+-    ref->GetPerformerAttr(perfAttr);
++    ref_->GetPerformerAttr(perfAttr);
+ 
+     lpNode->setMaxPixelSize(perfAttr.maxPixelSize);
+     lpNode->setMinPixelSize(perfAttr.minPixelSize);
+ 
+     trpg3dPoint norm;
+-    ref->GetNormal(norm);
++    ref_->GetNormal(norm);
+ 
+     trpgLightAttr::LightDirectionality direc;
+-    ref->GetDirectionality(direc);
++    ref_->GetDirectionality(direc);
+ 
+     for ( unsigned i=0; i < nvert; i++ )
+     {
+@@ -833,13 +833,13 @@ void* lightRead::Parse(trpgToken /*tok*/,trpgReadBuffer &buf)
+                 float lobeVert=0.f, lobeHorz=0.f, lobeRoll=0.f;
+                 float64 tmp;
+ 
+-                ref->GetHLobeAngle(tmp);
++                ref_->GetHLobeAngle(tmp);
+                 lobeHorz = osg::DegreesToRadians( tmp );
+ 
+-                ref->GetVLobeAngle(tmp);
++                ref_->GetVLobeAngle(tmp);
+                 lobeVert = osg::DegreesToRadians( tmp );
+ 
+-                ref->GetLobeRollAngle(tmp);
++                ref_->GetLobeRollAngle(tmp);
+                 lobeRoll = osg::DegreesToRadians( tmp );
+ 
+                 osg::Vec3 normal(norm.x,norm.y,norm.z);
+@@ -851,20 +851,20 @@ void* lightRead::Parse(trpgToken /*tok*/,trpgReadBuffer &buf)
+                 float lobeVert=0.f, lobeHorz=0.f, lobeRoll=0.f;
+                 float64 tmp;
+ 
+-                ref->GetHLobeAngle(tmp);
++                ref_->GetHLobeAngle(tmp);
+                 lobeHorz = osg::DegreesToRadians( tmp );
+ 
+-                ref->GetVLobeAngle(tmp);
++                ref_->GetVLobeAngle(tmp);
+                 lobeVert = osg::DegreesToRadians( tmp );
+ 
+-                ref->GetLobeRollAngle(tmp);
++                ref_->GetLobeRollAngle(tmp);
+                 lobeRoll = osg::DegreesToRadians( tmp );
+ 
+                 osg::Vec3 normal(norm.x,norm.y,norm.z);
+                 lp._sector = new osgSim::DirectionalSector( normal, lobeHorz, lobeVert, lobeRoll );
+ 
+-                ref->GetBackColor(col);
+-                ref->GetBackIntensity(inten);
++                ref_->GetBackColor(col);
++                ref_->GetBackIntensity(inten);
+ 
+                 osgSim::LightPoint lp2(
+                     true,
+diff --git a/src/osgPresentation/SlideEventHandler.cpp b/src/osgPresentation/SlideEventHandler.cpp
+index 6e12fd6..5789b07 100644
+--- a/src/osgPresentation/SlideEventHandler.cpp
++++ b/src/osgPresentation/SlideEventHandler.cpp
+@@ -1607,9 +1607,9 @@ void SlideEventHandler::releaseSlide(unsigned int slideNum)
+     _presentationSwitch->getChild(slideNum)->accept(globjVisitor);
+ }
+ 
+-void SlideEventHandler::forwardEventToDevices(osgGA::Event* event)
++void SlideEventHandler::forwardEventToDevices(osgGA::Event* event_in)
+ {
+-    if (!event) return;
++    if (!event_in) return;
+ 
+     // dispatch cloned event to devices
+     if (!_viewer)
+@@ -1623,14 +1623,14 @@ void SlideEventHandler::forwardEventToDevices(osgGA::Event* event)
+     {
+         if((*i)->getCapabilities() & osgGA::Device::SEND_EVENTS)
+         {
+-            (*i)->sendEvent(*event);
++            (*i)->sendEvent(*event_in);
+         }
+     }
+ }
+ 
+-void SlideEventHandler::dispatchEvent(osgGA::Event* event)
++void SlideEventHandler::dispatchEvent(osgGA::Event* event_in)
+ {
+-    if (!event) return;
++    if (!event_in) return;
+ 
+     // dispatch cloned event to devices
+     if (!_viewer)
+@@ -1646,7 +1646,7 @@ void SlideEventHandler::dispatchEvent(osgGA::Event* event)
+         return;
+     }
+ 
+-    eq->addEvent(event);
++    eq->addEvent(event_in);
+ }
+ 
+ void SlideEventHandler::dispatchEvent(const KeyPosition& keyPosition)
+@@ -1659,17 +1659,17 @@ void SlideEventHandler::dispatchEvent(const KeyPosition& keyPosition)
+ 
+     if (keyPosition._forwardToDevices)
+     {
+-        osg::ref_ptr<osgGA::GUIEventAdapter> event = new osgGA::GUIEventAdapter();
+-        event->setKey(keyPosition._key);
+-        event->setTime(_viewer->getEventQueue()->getTime());
++        osg::ref_ptr<osgGA::GUIEventAdapter> event_ = new osgGA::GUIEventAdapter();
++        event_->setKey(keyPosition._key);
++        event_->setTime(_viewer->getEventQueue()->getTime());
+ 
+         // forward key-down
+-        event->setEventType(osgGA::GUIEventAdapter::KEYDOWN);
+-        forwardEventToDevices(event.get());
++        event_->setEventType(osgGA::GUIEventAdapter::KEYDOWN);
++        forwardEventToDevices(event_.get());
+ 
+         // forward key-up
+-        event->setEventType(osgGA::GUIEventAdapter::KEYUP);
+-        forwardEventToDevices(event.get());
++        event_->setEventType(osgGA::GUIEventAdapter::KEYUP);
++        forwardEventToDevices(event_.get());
+ 
+         // ignore local event-queue
+         return;
+diff --git a/src/osgSim/ImpostorSprite.cpp b/src/osgSim/ImpostorSprite.cpp
+index 50fa125..fe8fab3 100644
+--- a/src/osgSim/ImpostorSprite.cpp
++++ b/src/osgSim/ImpostorSprite.cpp
+@@ -116,11 +116,11 @@ float ImpostorSprite::calcPixelError(const osg::Matrix& MVPW) const
+     return sqrtf(max_error_sqrd);
+ }
+ 
+-void ImpostorSprite::setTexture(osg::Texture2D* tex,int s,int t)
++void ImpostorSprite::setTexture(osg::Texture2D* tex,int s_in,int t_in)
+ {
+     _texture = tex;
+-    _s = s;
+-    _t = t;
++    _s = s_in;
++    _t = t_in;
+ }
+ 
+ 
+diff --git a/src/osgUI/PushButton.cpp b/src/osgUI/PushButton.cpp
+index cb83961..708135a 100644
+--- a/src/osgUI/PushButton.cpp
++++ b/src/osgUI/PushButton.cpp
+@@ -78,7 +78,7 @@ void PushButton::createGraphicsImplementation()
+     Style* style = (getStyle()!=0) ? getStyle() : Style::instance().get();
+ 
+ 
+-    float pressed = 0.88;
++    float pressed_ = 0.88;
+     float unFocused = 0.92;
+     float withFocus = 0.97;
+ 
+@@ -99,7 +99,7 @@ void PushButton::createGraphicsImplementation()
+     _buttonSwitch = new osg::Switch;
+     _buttonSwitch->addChild(style->createPanel(extents, osg::Vec4(unFocused, unFocused,unFocused, 1.0)));
+     _buttonSwitch->addChild(style->createPanel(extents, osg::Vec4(withFocus,withFocus,withFocus,1.0)));
+-    _buttonSwitch->addChild(style->createPanel(extents, osg::Vec4(pressed,pressed,pressed,1.0)));
++    _buttonSwitch->addChild(style->createPanel(extents, osg::Vec4(pressed_,pressed_,pressed_,1.0)));
+     _buttonSwitch->setSingleChildOn(0);
+ 
+     group->addChild(_buttonSwitch.get());
+diff --git a/src/osgUtil/CullVisitor.cpp b/src/osgUtil/CullVisitor.cpp
+index 119d9bd..5e5c584 100644
+--- a/src/osgUtil/CullVisitor.cpp
++++ b/src/osgUtil/CullVisitor.cpp
+@@ -1313,11 +1313,11 @@ class RenderStageCache : public osg::Object, public osg::Observer
+ 
+         virtual void objectDeleted(void* object)
+         {
+-            osg::Referenced* ref = reinterpret_cast<osg::Referenced*>(object);
++            osg::Referenced* ref_ = reinterpret_cast<osg::Referenced*>(object);
+ 
+             OpenThreads::ScopedLock<OpenThreads::Mutex> lock(_mutex);
+ 
+-            RenderStageMap::iterator itr = _renderStageMap.find(ref);
++            RenderStageMap::iterator itr = _renderStageMap.find(ref_);
+             if (itr!=_renderStageMap.end())
+             {
+                 _renderStageMap.erase(itr);
+diff --git a/src/osgUtil/DelaunayTriangulator.cpp b/src/osgUtil/DelaunayTriangulator.cpp
+index 0983b1f..5704f55 100644
+--- a/src/osgUtil/DelaunayTriangulator.cpp
++++ b/src/osgUtil/DelaunayTriangulator.cpp
+@@ -120,7 +120,7 @@ public:
+     };
+ 
+     Edge(): ib_(0), ie_(0), ibs_(0), ies_(0), duplicate_(false) {}
+-    Edge(Vertex_index ib, Vertex_index ie) : ib_(ib), ie_(ie), ibs_(osg::minimum(ib, ie)), ies_(osg::maximum(ib, ie)), duplicate_(false) {}
++    Edge(Vertex_index ib_in, Vertex_index ie_in) : ib_(ib_in), ie_(ie_in), ibs_(osg::minimum(ib_in, ie_in)), ies_(osg::maximum(ib_in, ie_in)), duplicate_(false) {}
+ 
+     // first endpoint
+     inline Vertex_index ib() const { return ib_; }
+@@ -159,10 +159,10 @@ public:
+         c_(0) {}
+ 
+ 
+-    Triangle(Vertex_index a, Vertex_index b, Vertex_index c, osg::Vec3Array *points)
+-        :    a_(a),
+-            b_(b),
+-            c_(c),
++    Triangle(Vertex_index a_in, Vertex_index b_in, Vertex_index c_in, osg::Vec3Array *points)
++        :    a_(a_in),
++            b_(b_in),
++            c_(c_in),
+             cc_(compute_circumcircle((*points)[a_], (*points)[b_], (*points)[c_]))
+     {
+         edge_[0] = Edge(a_, b_);
+@@ -208,16 +208,16 @@ public:
+ 
+     bool isedge(const unsigned int ip1,const unsigned int ip2) const
+     { // is one of the edges of this triangle from ip1-ip2
+-        bool isedge=ip1==a() && ip2==b();
+-        if (!isedge)
++        bool isedge_=ip1==a() && ip2==b();
++        if (!isedge_)
+         {
+-            isedge=ip1==b() && ip2==c();
+-            if (!isedge)
++            isedge_=ip1==b() && ip2==c();
++            if (!isedge_)
+             {
+-                isedge=ip1==c() && ip2==a();
++                isedge_=ip1==c() && ip2==a();
+             }
+         }
+-        return isedge;
++        return isedge_;
+     }
+ 
+     bool intersectedby(const osg::Vec2 p1,const osg::Vec2 p2,osg::Vec3Array *points) const {
+diff --git a/src/osgUtil/MeshOptimizers.cpp b/src/osgUtil/MeshOptimizers.cpp
+index 79fcef1..1810f89 100644
+--- a/src/osgUtil/MeshOptimizers.cpp
++++ b/src/osgUtil/MeshOptimizers.cpp
+@@ -108,9 +108,9 @@ struct VertexAttribComparitor : public GeometryArrayGatherer
+             itr!=_arrayList.end();
+             ++itr)
+         {
+-            int compare = (*itr)->compare(lhs,rhs);
+-            if (compare==-1) return true;
+-            if (compare==1) return false;
++            int compare_ = (*itr)->compare(lhs,rhs);
++            if (compare_==-1) return true;
++            if (compare_==1) return false;
+         }
+         return false;
+     }
+@@ -121,9 +121,9 @@ struct VertexAttribComparitor : public GeometryArrayGatherer
+             itr!=_arrayList.end();
+             ++itr)
+         {
+-            int compare = (*itr)->compare(lhs,rhs);
+-            if (compare==-1) return -1;
+-            if (compare==1) return 1;
++            int compare_ = (*itr)->compare(lhs,rhs);
++            if (compare_==-1) return -1;
++            if (compare_==1) return 1;
+         }
+         return 0;
+     }
+diff --git a/src/osgUtil/ReversePrimitiveFunctor.cpp b/src/osgUtil/ReversePrimitiveFunctor.cpp
+index 34959db..46da91e 100644
+--- a/src/osgUtil/ReversePrimitiveFunctor.cpp
++++ b/src/osgUtil/ReversePrimitiveFunctor.cpp
+@@ -103,13 +103,13 @@ void ReversePrimitiveFunctor::drawArrays(GLenum mode, GLint first, GLsizei count
+     osg::DrawElementsUInt * primitives = new osg::DrawElementsUInt(mode);
+     primitives->reserve(count);
+ 
+-    GLint end = first + count;
++    GLint end_ = first + count;
+ 
+     switch (mode)
+     {
+         case (GL_TRIANGLES):
+         {
+-            for (GLint i=first; i<end; i+=3)
++            for (GLint i=first; i<end_; i+=3)
+             {
+                 primitives->push_back(i);
+                 primitives->push_back(i+2);
+@@ -119,7 +119,7 @@ void ReversePrimitiveFunctor::drawArrays(GLenum mode, GLint first, GLsizei count
+         }
+         case (GL_QUADS):
+         {
+-            for (GLint i=first; i<end; i+=4)
++            for (GLint i=first; i<end_; i+=4)
+             {
+                 primitives->push_back(i);
+                 primitives->push_back(i+3);
+@@ -131,7 +131,7 @@ void ReversePrimitiveFunctor::drawArrays(GLenum mode, GLint first, GLsizei count
+         case (GL_TRIANGLE_STRIP):
+         case (GL_QUAD_STRIP):
+         {
+-            for (GLint i=first; i<end; i+=2)
++            for (GLint i=first; i<end_; i+=2)
+             {
+                 primitives->push_back(i+1);
+                 primitives->push_back(i);
+@@ -142,7 +142,7 @@ void ReversePrimitiveFunctor::drawArrays(GLenum mode, GLint first, GLsizei count
+         {
+             primitives->push_back(first);
+ 
+-            for (GLint i=end-1; i>first; i--)
++            for (GLint i=end_-1; i>first; i--)
+                 primitives->push_back(i);
+ 
+             break;
+@@ -153,7 +153,7 @@ void ReversePrimitiveFunctor::drawArrays(GLenum mode, GLint first, GLsizei count
+         case (GL_LINE_STRIP):
+         case (GL_LINE_LOOP):
+         {
+-            for (GLint i=end-1; i>=first; i--)
++            for (GLint i=end_-1; i>=first; i--)
+                 primitives->push_back(i);
+ 
+             break;
+diff --git a/src/osgUtil/Tessellator.cpp b/src/osgUtil/Tessellator.cpp
+index f8dcf58..e60ff30 100644
+--- a/src/osgUtil/Tessellator.cpp
++++ b/src/osgUtil/Tessellator.cpp
+@@ -73,23 +73,23 @@ void Tessellator::beginContour()
+     }
+ }
+ 
+-void Tessellator::addVertex(osg::Vec3* vertex)
++void Tessellator::addVertex(osg::Vec3* vertex_in)
+ {
+     if (_tobj)
+     {
+-        if (vertex && vertex->valid())
++        if (vertex_in && vertex_in->valid())
+         {
+             Vec3d* data = new Vec3d;
+             _coordData.push_back(data);
+-            (*data)._v[0]=(*vertex)[0];
+-            (*data)._v[1]=(*vertex)[1];
+-            (*data)._v[2]=(*vertex)[2];
+-            gluTessVertex(_tobj,data->_v,vertex);
++            (*data)._v[0]=(*vertex_in)[0];
++            (*data)._v[1]=(*vertex_in)[1];
++            (*data)._v[2]=(*vertex_in)[2];
++            gluTessVertex(_tobj,data->_v,vertex_in);
+         }
+         else
+         {
+-            if (vertex) {
+-                OSG_INFO << "Tessellator::addVertex(" << *vertex << ") detected NaN, ignoring vertex." << std::endl;
++            if (vertex_in) {
++                OSG_INFO << "Tessellator::addVertex(" << *vertex_in << ") detected NaN, ignoring vertex." << std::endl;
+             }
+             else
+             {
+@@ -482,11 +482,11 @@ void Tessellator::handleNewVertices(osg::Geometry& geom,VertexPtrToIndexMap &ver
+             ++itr)
+         {
+             NewVertex& newVertex = (*itr);
+-            osg::Vec3* vertex = newVertex._vpos;
++            osg::Vec3* vertex_ = newVertex._vpos;
+ 
+             // assign vertex.
+-            vertexPtrToIndexMap[vertex]=vertices->size();
+-            vertices->push_back(*vertex);
++            vertexPtrToIndexMap[vertex_]=vertices->size();
++            vertices->push_back(*vertex_);
+ 
+             // assign normals
+             if (normals)
+@@ -526,19 +526,19 @@ void Tessellator::begin(GLenum mode)
+     _primList.push_back(new Prim(mode));
+ }
+ 
+-void Tessellator::vertex(osg::Vec3* vertex)
++void Tessellator::vertex(osg::Vec3* vertex_in)
+ {
+     if (!_primList.empty())
+     {
+         Prim* prim = _primList.back().get();
+-        prim->_vertices.push_back(vertex);
++        prim->_vertices.push_back(vertex_in);
+ 
+     }
+ }
+ 
+-void Tessellator::combine(osg::Vec3* vertex,void* vertex_data[4],GLfloat weight[4])
++void Tessellator::combine(osg::Vec3* vertex_in,void* vertex_data[4],GLfloat weight[4])
+ {
+-    _newVertexList.push_back(NewVertex(vertex,
++    _newVertexList.push_back(NewVertex(vertex_in,
+                                     weight[0],(Vec3*)vertex_data[0],
+                                      weight[1],(Vec3*)vertex_data[1],
+                                      weight[2],(Vec3*)vertex_data[2],
+diff --git a/src/osgUtil/TriStripVisitor.cpp b/src/osgUtil/TriStripVisitor.cpp
+index 605aa6c..4ff37e0 100644
+--- a/src/osgUtil/TriStripVisitor.cpp
++++ b/src/osgUtil/TriStripVisitor.cpp
+@@ -99,9 +99,9 @@ struct VertexAttribComparitor
+             itr!=_arrayList.end();
+             ++itr)
+         {
+-            int compare = (*itr)->compare(lhs,rhs);
+-            if (compare==-1) return true;
+-            if (compare==1) return false;
++            int compare_ = (*itr)->compare(lhs,rhs);
++            if (compare_==-1) return true;
++            if (compare_==1) return false;
+         }
+         return false;
+     }
+@@ -112,9 +112,9 @@ struct VertexAttribComparitor
+             itr!=_arrayList.end();
+             ++itr)
+         {
+-            int compare = (*itr)->compare(lhs,rhs);
+-            if (compare==-1) return -1;
+-            if (compare==1) return 1;
++            int compare_ = (*itr)->compare(lhs,rhs);
++            if (compare_==-1) return -1;
++            if (compare_==1) return 1;
+         }
+ //
+ //         WriteValue wv(std::cout);
+diff --git a/src/osgUtil/tristripper/include/detail/types.h b/src/osgUtil/tristripper/include/detail/types.h
+index 36ebd17..74cf0b7 100644
+--- a/src/osgUtil/tristripper/include/detail/types.h
++++ b/src/osgUtil/tristripper/include/detail/types.h
+@@ -26,11 +26,11 @@ public:
+     triangle()
+         : m_A(0), m_B(0), m_C(0), m_StripID(0) { }
+ 
+-    triangle(index A, index B, index C)
+-        : m_A(A), m_B(B), m_C(C), m_StripID(0) { }
++    triangle(index A_in, index B_in, index C_in)
++        : m_A(A_in), m_B(B_in), m_C(C_in), m_StripID(0) { }
+ 
+     void ResetStripID()                            { m_StripID = 0; }
+-    void SetStripID(size_t StripID)                { m_StripID = StripID; }
++    void SetStripID(size_t StripID_in)                { m_StripID = StripID_in; }
+     size_t StripID() const                        { return m_StripID; }
+ 
+     index A() const                                { return m_A; }
+@@ -50,8 +50,8 @@ private:
+ class triangle_edge
+ {
+ public:
+-    triangle_edge(index A, index B)
+-        : m_A(A), m_B(B) { }
++    triangle_edge(index A_in, index B_in)
++        : m_A(A_in), m_B(B_in) { }
+ 
+     index A() const                                { return m_A; }
+     index B() const                                { return m_B; }
+@@ -77,8 +77,8 @@ public:
+     strip()
+         : m_Start(0), m_Order(ABC), m_Size(0) { }
+ 
+-    strip(size_t Start, triangle_order Order, size_t Size)
+-        : m_Start(Start), m_Order(Order), m_Size(Size) { }
++    strip(size_t Start_in, triangle_order Order_in, size_t Size_in)
++        : m_Start(Start_in), m_Order(Order_in), m_Size(Size_in) { }
+ 
+     size_t Start() const                        { return m_Start; }
+     triangle_order Order() const                { return m_Order; }
+diff --git a/src/osgUtil/tristripper/include/tri_stripper.h b/src/osgUtil/tristripper/include/tri_stripper.h
+index c825886..95e165a 100644
+--- a/src/osgUtil/tristripper/include/tri_stripper.h
++++ b/src/osgUtil/tristripper/include/tri_stripper.h
+@@ -139,10 +139,10 @@ private:
+ // tri_stripper inline functions
+ //////////////////////////////////////////////////////////////////////////
+ 
+-inline void tri_stripper::SetCacheSize(const size_t CacheSize)
++inline void tri_stripper::SetCacheSize(const size_t CacheSize_in)
+ {
+-    m_Cache.resize(CacheSize);
+-    m_BackCache.resize(CacheSize);
++    m_Cache.resize(CacheSize_in);
++    m_BackCache.resize(CacheSize_in);
+ }
+ 
+ 
+diff --git a/src/osgUtil/tristripper/src/connectivity_graph.cpp b/src/osgUtil/tristripper/src/connectivity_graph.cpp
+index 3665d05..525f56a 100644
+--- a/src/osgUtil/tristripper/src/connectivity_graph.cpp
++++ b/src/osgUtil/tristripper/src/connectivity_graph.cpp
+@@ -27,8 +27,8 @@ namespace
+     class tri_edge : public triangle_edge
+     {
+     public:
+-        tri_edge(index A, index B, size_t TriPos)
+-            : triangle_edge(A, B), m_TriPos(TriPos) { }
++        tri_edge(index A_in, index B_in, size_t TriPos_in)
++            : triangle_edge(A_in, B_in), m_TriPos(TriPos_in) { }
+ 
+         size_t TriPos() const { return m_TriPos; }
+ 
+diff --git a/src/osgUtil/tristripper/src/tri_stripper.cpp b/src/osgUtil/tristripper/src/tri_stripper.cpp
+index be87aa4..d0503d7 100644
+--- a/src/osgUtil/tristripper/src/tri_stripper.cpp
++++ b/src/osgUtil/tristripper/src/tri_stripper.cpp
+@@ -141,8 +141,8 @@ inline strip tri_stripper::FindBestStrip()
+         // Try to extend the triangle in the 3 possible forward directions
+         for (size_t i = 0; i < 3; ++i) {
+ 
+-            const strip Strip = ExtendToStrip(Candidate, triangle_order(i));
+-            Policy.Challenge(Strip, m_TriHeap[Strip.Start()], m_Cache.hitcount());
++            const strip Strip_ = ExtendToStrip(Candidate, triangle_order(i));
++            Policy.Challenge(Strip_, m_TriHeap[Strip_.Start()], m_Cache.hitcount());
+ 
+             m_Cache = CacheBackup;
+         }
+@@ -152,16 +152,16 @@ inline strip tri_stripper::FindBestStrip()
+ 
+             for (size_t i = 0; i < 3; ++i) {
+ 
+-                const strip Strip = BackExtendToStrip(Candidate, triangle_order(i), false);
+-                Policy.Challenge(Strip, m_TriHeap[Strip.Start()], m_Cache.hitcount());
++                const strip Strip_ = BackExtendToStrip(Candidate, triangle_order(i), false);
++                Policy.Challenge(Strip_, m_TriHeap[Strip_.Start()], m_Cache.hitcount());
+ 
+                 m_Cache = CacheBackup;
+             }
+ 
+             for (size_t i = 0; i < 3; ++i) {
+ 
+-                const strip Strip = BackExtendToStrip(Candidate, triangle_order(i), true);
+-                Policy.Challenge(Strip, m_TriHeap[Strip.Start()], m_Cache.hitcount());
++                const strip Strip_ = BackExtendToStrip(Candidate, triangle_order(i), true);
++                Policy.Challenge(Strip_, m_TriHeap[Strip_.Start()], m_Cache.hitcount());
+ 
+                 m_Cache = CacheBackup;
+             }
+@@ -256,12 +256,12 @@ strip tri_stripper::BackExtendToStrip(size_t Start, triangle_order Order, bool C
+ 
+ 
+ 
+-void tri_stripper::BuildStrip(const strip Strip)
++void tri_stripper::BuildStrip(const strip Strip_in)
+ {
+-    const size_t Start = Strip.Start();
++    const size_t Start = Strip_in.Start();
+ 
+     bool ClockWise = false;
+-    triangle_order Order = Strip.Order();
++    triangle_order Order = Strip_in.Order();
+ 
+     // Create a new strip
+     m_PrimitivesVector.push_back(primitive_group());
+@@ -272,7 +272,7 @@ void tri_stripper::BuildStrip(const strip Strip)
+     // Loop while we can further extend the strip
+     tri_iterator Node = (m_Triangles.begin() + Start);
+ 
+-    for (size_t Size = 1; Size < Strip.Size(); ++Size) {
++    for (size_t Size = 1; Size < Strip_in.Size(); ++Size) {
+ 
+         const const_link_iterator Link = LinkToNeighbour(Node, ClockWise, Order, true);
+ 
+diff --git a/src/osgWidget/Input.cpp b/src/osgWidget/Input.cpp
+index 3b565b0..b8f09b4 100644
+--- a/src/osgWidget/Input.cpp
++++ b/src/osgWidget/Input.cpp
+@@ -168,12 +168,12 @@ void Input::_calculateCursorOffsets() {
+                 if (previous_g)
+                 {
+                     {
+-                        point_type& ref = _offsets[idx];
+-                        ref += previous_g->getHorizontalAdvance();
++                        point_type& ref_ = _offsets[idx];
++                        ref_ += previous_g->getHorizontalAdvance();
+                     }
+                     {
+-                        point_type& ref = _widths[idx];
+-                        ref += previous_g->getHorizontalAdvance();
++                        point_type& ref_ = _widths[idx];
++                        ref_ += previous_g->getHorizontalAdvance();
+                     }
+                 }
+                 previous_g = g;
+diff --git a/src/osgWidget/Window.cpp b/src/osgWidget/Window.cpp
+index b004fad..d0bae54 100644
+--- a/src/osgWidget/Window.cpp
++++ b/src/osgWidget/Window.cpp
+@@ -382,18 +382,18 @@ void Window::update() {
+     setMatrix(r * s * t);
+ }
+ 
+-void Window::_setWidthAndHeightUnknownSizeError(const std::string& size, point_type val) {
++void Window::_setWidthAndHeightUnknownSizeError(const std::string& size_in, point_type val) {
+     warn()
+-        << "Window [" << _name << "] doesn't know its " << size
++        << "Window [" << _name << "] doesn't know its " << size_in
+         << " (" << val << ")." << std::endl
+     ;
+ }
+ 
+-void Window::_setWidthAndHeightNotPAError(const std::string& size, point_type val) {
++void Window::_setWidthAndHeightNotPAError(const std::string& size_in, point_type val) {
+     warn()
+         << "Window [" << _name
+         << "] should be pixel-aligned, but a remainder was detected for it's "
+-        << size << " (" << val << ")." << std::endl
++        << size_in << " (" << val << ")." << std::endl
+     ;
+ }
+ 
+@@ -938,88 +938,88 @@ unsigned int Window::addChildAndGetIndex(osg::Node* node) {
+ // self-explanatory. They simply wrap calls to _compare<>() with the proper templates, and
+ // forward the optional iteration ranges...
+ 
+-point_type Window::_getMinWidgetWidth(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getWidth, begin, end, add);
++point_type Window::_getMinWidgetWidth(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getWidth, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetHeight(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getHeight, begin, end, add);
++point_type Window::_getMinWidgetHeight(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getHeight, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetWidth(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getWidth, begin, end, add);
++point_type Window::_getMaxWidgetWidth(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getWidth, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetHeight(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getHeight, begin, end, add);
++point_type Window::_getMaxWidgetHeight(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getHeight, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetMinWidth(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getMinWidth, begin, end, add);
++point_type Window::_getMinWidgetMinWidth(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getMinWidth, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetMinHeight(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getMinHeight, begin, end, add);
++point_type Window::_getMinWidgetMinHeight(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getMinHeight, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetMinWidth(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getMinWidth, begin, end, add);
++point_type Window::_getMaxWidgetMinWidth(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getMinWidth, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetMinHeight(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getMinHeight, begin, end, add);
++point_type Window::_getMaxWidgetMinHeight(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getMinHeight, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetWidthTotal(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getWidthTotal, begin, end, add);
++point_type Window::_getMinWidgetWidthTotal(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getWidthTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetHeightTotal(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getHeightTotal, begin, end, add);
++point_type Window::_getMinWidgetHeightTotal(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getHeightTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetWidthTotal(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getWidthTotal, begin, end, add);
++point_type Window::_getMaxWidgetWidthTotal(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getWidthTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetHeightTotal(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getHeightTotal, begin, end, add);
++point_type Window::_getMaxWidgetHeightTotal(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getHeightTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetMinWidthTotal(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getMinWidthTotal, begin, end, add);
++point_type Window::_getMinWidgetMinWidthTotal(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getMinWidthTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetMinHeightTotal(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getMinHeightTotal, begin, end, add);
++point_type Window::_getMinWidgetMinHeightTotal(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getMinHeightTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetMinWidthTotal(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getMinWidthTotal, begin, end, add);
++point_type Window::_getMaxWidgetMinWidthTotal(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getMinWidthTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetMinHeightTotal(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getMinHeightTotal, begin, end, add);
++point_type Window::_getMaxWidgetMinHeightTotal(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getMinHeightTotal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetPadHorizontal(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getPadHorizontal, begin, end, add);
++point_type Window::_getMinWidgetPadHorizontal(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getPadHorizontal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMinWidgetPadVertical(int begin, int end, int add) const {
+-    return _compare<Less>(&Widget::getPadVertical, begin, end, add);
++point_type Window::_getMinWidgetPadVertical(int begin_in, int end_in, int add) const {
++    return _compare<Less>(&Widget::getPadVertical, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetPadHorizontal(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getPadHorizontal, begin, end, add);
++point_type Window::_getMaxWidgetPadHorizontal(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getPadHorizontal, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getMaxWidgetPadVertical(int begin, int end, int add) const {
+-    return _compare<Greater>(&Widget::getPadVertical, begin, end, add);
++point_type Window::_getMaxWidgetPadVertical(int begin_in, int end_in, int add) const {
++    return _compare<Greater>(&Widget::getPadVertical, begin_in, end_in, add);
+ }
+ 
+-point_type Window::_getNumFill(int begin, int end, int add) const {
+-    return _accumulate<Plus>(&Widget::getFillAsNumeric, begin, end, add);
++point_type Window::_getNumFill(int begin_in, int end_in, int add) const {
++    return _accumulate<Plus>(&Widget::getFillAsNumeric, begin_in, end_in, add);
+ }
+ 
+ Window::Sizes Window::_getWidthImplementation() const {
+diff --git a/src/osgWidget/WindowManager.cpp b/src/osgWidget/WindowManager.cpp
+index 7bccbd3..25ac73e 100644
+--- a/src/osgWidget/WindowManager.cpp
++++ b/src/osgWidget/WindowManager.cpp
+@@ -239,9 +239,9 @@ void WindowManager::_updatePickWindow(const WidgetList* wl, point_type x, point_
+ 
+     label->setLabel(ss.str());
+ 
+-    XYCoord size = label->getTextSize();
++    XYCoord size_ = label->getTextSize();
+ 
+-    _pickWindow->resize(size.x() + 10.0f, size.y() + 10.0f);
++    _pickWindow->resize(size_.x() + 10.0f, size_.y() + 10.0f);
+     _pickWindow->setOrigin(5.0f, _height - _pickWindow->getHeight() - 5.0f);
+     _pickWindow->update();
+ }
